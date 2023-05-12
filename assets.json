@@ -1,0 +1,18 @@
+{
+  "ISF_MTA_EUR": [
+    {
+      "weight": 0,
+      "n_assets": 0
+    }
+  ],
+  "IQQJ_XETR_EUR": [
+    {
+      "weight": 0,
+      "n_assets": 0
+    }
+  ],
+  "cash": {
+    "weight": 1,
+    "n_assets": 10000
+  }
+}
