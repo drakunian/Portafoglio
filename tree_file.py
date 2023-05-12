@@ -534,4 +534,9 @@ nelle colonne l'identificativo del parent'''
     valore del cash_in e cash_out del periodo
     vattore dei ribilanciamenti
     metodo ricorsivo per la creazione dei figli (finisce quando arrivo all'ultimo periodo)
+
+
+
+prova
+
 '''
