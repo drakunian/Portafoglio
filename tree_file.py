@@ -535,7 +535,3 @@ nelle colonne l'identificativo del parent'''
     vattore dei ribilanciamenti
     metodo ricorsivo per la creazione dei figli (finisce quando arrivo all'ultimo periodo)
 '''
-
-"""
-test
-"""
