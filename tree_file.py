@@ -18,6 +18,7 @@ from docplex.mp.model import Model
 
 import pyarrow.parquet as pq
 
+from Nodo import Nodo
 from dbconn_copy import DBConnection, DBOperations
 
 #from dbconn_copy import DBConnection, DBOperations
@@ -464,9 +465,15 @@ if __name__ == "__main__":
 
     start = timeit.default_timer()
 
-    main()
-
+    #main()
+    nodo = Nodo(True, 1, None)
+    matrice = pd.DataFrame({nodo})
+    print(matrice)
+    contatore = 0
+    nodo.generateSon(matrice, contatore)
     # dataframe = pd.read_json("assets.json")
+    stop = timeit.default_timer()
+    print(stop-start)
     '''with open("assets.json", "r") as f:
             data = f.read()
             assets_json = json.loads(data) #assets_json è un dizionario
@@ -532,11 +539,5 @@ nelle colonne l'identificativo del parent'''
     probabilità condizionata = probabi. nodo * prob. condizionata del parent
     lista dei flussi di cassa degli asset del periodo
     valore del cash_in e cash_out del periodo
-    vattore dei ribilanciamenti
-    metodo ricorsivo per la creazione dei figli (finisce quando arrivo all'ultimo periodo)
-
-
-
-prova
-
-'''
+    vettore dei ribilanciamenti
+    metodo ricorsivo per la creazione dei figli (finisce quando arrivo all'ultimo periodo)'''
