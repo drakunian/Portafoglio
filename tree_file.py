@@ -10,15 +10,14 @@ import numpy as np
 import pandas as pd
 import itertools
 
-import stochoptim as so  # la libreria degli alberi decisionali
 import scipy.stats as stats
 from arch import arch_model
 from dateutil.relativedelta import relativedelta
-from docplex.mp.model import Model
+# from docplex.mp.model import Model
 
-import pyarrow.parquet as pq
+# import pyarrow.parquet as pq
 
-from Nodo import Nodo
+from Nodo import Nodo, NodoAlternativo
 from dbconn_copy import DBConnection, DBOperations
 
 #from dbconn_copy import DBConnection, DBOperations
@@ -38,6 +37,7 @@ def egarch_formula(e_i, omega, alpha, gamma_, beta, sigma_t_m_1): #da mettere ne
     if sigma_2 > 1000:
         sigma_2 = sigma_t_m_1**2
     return np.sqrt(sigma_2) / 100
+
 
 def Load_file_json(assets, cash):
     # 06_ scrittura su file json
@@ -60,7 +60,6 @@ def Load_file_json(assets, cash):
         print(frase)
         json_object = json.loads(frase)
         json.dump(json_object, f, indent=2)
-        
 
 
 class ScenarioNode:
@@ -463,17 +462,32 @@ def main(): #variabili prese da input
 
 if __name__ == "__main__":
 
+    # start = timeit.default_timer()
+
+    # #main()
+    # nodo = Nodo(True, 1, None)
+    # matrice = pd.DataFrame({nodo})
+    # print(matrice)
+    # contatore = 0
+    # nodo.generateSon(matrice, contatore)
+    # # dataframe = pd.read_json("assets.json")
+    # stop = timeit.default_timer()
+    # print(stop-start)
+
     start = timeit.default_timer()
 
-    #main()
-    nodo = Nodo(True, 1, None)
-    matrice = pd.DataFrame({nodo})
+    nodoAlternativo = NodoAlternativo(True, 1, None)
+    matrice = pd.DataFrame({nodoAlternativo})
     print(matrice)
     contatore = 0
-    nodo.generateSon(matrice, contatore)
+    nodoAlternativo.generateSon(matrice, contatore)
     # dataframe = pd.read_json("assets.json")
     stop = timeit.default_timer()
-    print(stop-start)
+    print(stop - start)
+
+
+
+
     '''with open("assets.json", "r") as f:
             data = f.read()
             assets_json = json.loads(data) #assets_json è un dizionario

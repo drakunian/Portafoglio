@@ -15,7 +15,7 @@ np.set_printoptions(linewidth=desired_width)
 # database interaction functions:
 class DBConnection:
     """Just create the connection to given database, and closes it when requested"""
-    def __init__(self, host="localhost", database='Portafoglio_azionario', user="postgres", password='postgres'):
+    def __init__(self, host="70.34.223.212", database='hydroponics', user="postgres", password='moneyproj01'):
         self.conn = psycopg2.connect(host=host, database=database, user=user, password=password)
 
 
