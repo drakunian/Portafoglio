@@ -293,7 +293,7 @@ class NewTree:
             current_assets_prices: pd.DataFrame,
             assets_json: json = None,
             horizon=12,
-            cash_return=.01,  # probably to take it out from here...
+            cash_return=.01,  # probably to take it out from here
             period='1month',
             cash_currency='EUR'
     ):  # sono variabili prese da input
