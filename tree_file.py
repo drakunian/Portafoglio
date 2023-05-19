@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import pprint
 import random
@@ -129,6 +130,11 @@ class ScenarioNode:
             # rescaling a_i and sigma:
             dummy['sigma_t'] = self.assets_data['sigma_t'] * 100
             # forecasted variances, to be taken also when measuring probabilities of future sibling nodes
+            """
+            poiché prendiamo solo l'ultimo valore, allora non ha senso passare l'intera matrice dei ritorni.
+            Tra l'altro, per non alterare i risultati, vorremmo proprio mescare solo dai valori realizzati al momento
+            dell'investimento in ogni caso (?)
+            """
             for column in self.inherited_assets_returns:
                 e_i = self.inherited_returns_residuals[column].tail(1).values[0]
                 omega, alpha, gamma_, beta, sigma_t_m_1 = dummy[['omega', 'alpha[1]', 'gamma[1]', 'beta[1]', 'sigma_t']].loc[column].to_list()
@@ -480,10 +486,14 @@ if __name__ == "__main__":
     matrice = pd.DataFrame({nodoAlternativo})
     print(matrice)
     contatore = 0
-    nodoAlternativo.generateSon(matrice, contatore)
+    nodoAlternativo.generateSonMultithreadedHybrid(matrice, contatore)
     # dataframe = pd.read_json("assets.json")
+    print(nodoAlternativo.matrix_list)
     stop = timeit.default_timer()
-    print(stop - start)
+    minutes = (stop - start) / 60
+    print('full minutes: ', minutes)
+    seconds, minutes = math.modf(minutes)
+    print(f'{minutes} minuti e {round(seconds * 60)} secondi')
 
 
 
