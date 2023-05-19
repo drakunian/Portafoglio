@@ -21,7 +21,7 @@ from dateutil.relativedelta import relativedelta
 from Nodo import Nodo, ScenarioNode, egarch_formula
 from dbconn_copy import DBConnection, DBOperations
 
-#from dbconn_copy import DBConnection, DBOperations
+# from dbconn_copy import DBConnection, DBOperations
 
 pd.options.display.float_format = "{:,.6f}".format
 
@@ -53,7 +53,7 @@ class NewTree:
     def __init__(
             self,
             assets_df: pd.DataFrame,
-            assets_returns_data: pd.DataFrame,
+            assets_returns_data: pd.DataFrame,  # dovremmo caricare qui anche il file con i ritorni giornalieri...
             current_assets_prices: pd.DataFrame,
             assets_json: json = None,
             horizon=12,
