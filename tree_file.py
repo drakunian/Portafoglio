@@ -18,7 +18,7 @@ from dateutil.relativedelta import relativedelta
 
 # import pyarrow.parquet as pq
 
-from Nodo import Nodo, NodoAlternativo
+from Nodo import Nodo
 from dbconn_copy import DBConnection, DBOperations
 
 #from dbconn_copy import DBConnection, DBOperations
@@ -64,64 +64,102 @@ def Load_file_json(assets, cash):
 
 
 class ScenarioNode:
+    # CLASS DATA NON FUNZIONA CON IL MULTITHREADING!
+    # assets_returns: pd.DataFrame
+    # residuals: pd.DataFrame
+    # corr_matrix: pd.DataFrame
+
     """collects all data about the given node: the node id, to identify the node on the tree; the realized returns and
     all the other node events (such as cashflows and dividends...).
     On the node will then be collected data about decisions and realizations for the portfolio being optimized..."""
-    def __init__(self, is_root=False, ad=None, parent=None, corr_matrix=None, in_ret=None, in_res=None, period_date=None):
-        self.root = is_root
-        self.assets_data = ad  # get from parent. It will have new column: Close_Prices, that will be renamed here
-        self.assets_data['close_prices_t_m_1'] = self.assets_data['close_prices_t']
-        print(self.assets_data)
-
-        self.parent = parent
-        self.corr_matrix = corr_matrix
-        self.inherited_assets_returns = in_ret  # df of realized assets returns, inherited from parent, append new data
-        self.inherited_returns_residuals = in_res  # df of residuals from returns, inherited from parent, append new data
+    def __init__(self, root: bool, parent, returns: pd.DataFrame, cor_matrix: pd.DataFrame, period_date=None):
+        self.root = root
         self.date = period_date  # to be used for index of new row of returns
+        self.parent = None
+        self.assets_data = None
+        self.cash_data = None
+        self.init_values(parent)  # modifies data of above parameters
 
-
-        #computer_returns is a functioin
-        self.realized_returns = self.compute_returns() if is_root is False else self.inherited_assets_returns.tail(1)
-
-        self.residuals = self.compute_residuals() if is_root is False else self.inherited_returns_residuals.tail(1)
+        self.compute_returns(returns)
         # probabilities measurement inputs:
-        # diagonal matrix of conditional variances
-        self.conditional_variances = self.compute_variances() #compute_variances is a functione che usa il EGARCH
-        # covariance matrix
-        self.conditional_covariances = self.compute_covariances()
+        self.conditional_variances = self.compute_variances()  # diagonal matrix of conditional variances
+        self.conditional_covariances = self.compute_covariances(cor_matrix=cor_matrix)  # covariance matrix
 
-        self.parent_probability = self.parent.probability if is_root is False else None
+        self.parent_probability = parent.probability if root is False else None
         self.probability = 1  # of single Node, not conditional to the previous node probability
-
+        self.cond_probability = self.probability * parent.cond_probability if root is False else self.probability
         # adds the dividends and other cashflows expected on the scenario...
-
-        #da qua in poi ci saranno tutte variabili utili per ottimizzare il portafoglio
+        """
+        should also:
+        Compute dividend_yield (for return purposes), Append annuities_period to the assets_data 
+        then, from cash_flows period subtract/add cash moved by investor to the portfolio and then execute rebalancing
+        code
+        """
         self.rebalancing_vector = []  # vector of shares/value to buy (+) or sell (-) of each asset
 
-    def compute_returns(self):
-        """gets a random sample of returns from each assets, then adjusts the returns sampled to get unique values"""
-        sampled = [self.inherited_assets_returns[column].dropna().sample().reset_index(drop=True) for column in self.inherited_assets_returns.columns]
-        #dropna() --> removes the rows that contains NULL values
-        #sample() --> Return a random sample of items from an axis of object.
-        #.reset_index() --> allows you reset the index back to the default 0, 1, 2 etc indexes
-        #.columns --> has successfully returned all of the column labels of the given dataframe.
+    '''def __init__(self, root, date, assets_df, parent, assets_return, residui_ritorni, probability, flussi_cassa):
+        self.root = root
+        self.date = date
+        self.assets_df = assets_df
+        self.parent = parent
+        self.assets_return = parent.getReturn
+        self.residui_ritorni = parent.getResidui
+        self.varianze = ...     #CALCOLO IN METODO
+        self.covarianze = ...  #CALCOLO IN METODO
+        self.parent_prob = parent.getProbability
+        self.probability = ... #CALCOLO IN METODO
+        self.prob_conditionata = probability * parent.getProbCondizionata #CALCOLO IN METODO
+        self.flussi_cassa = flussi_cassa
+        cash_in = ...
+        cash_out = ...
+        vett_ribilanciamenti = ...
+        generateSon(root)'''
+    def __str__(self):
+        return f"node_n_from_period_{self.date}"
 
-        sample_row = pd.concat(sampled, axis=1)  # riga di dataframe con index 0
-        #.concat() -->  does all the heavy lifting of performing concatenation operations along with an axis od Pandas objects while performing optional set logic (union or intersection) of the indexes (if any) on the other axes
-        sample_row.index = [self.date] # index della riga diventa la data del nodo
-        # updates the inherited returns data...
-        self.inherited_assets_returns = pd.concat([self.inherited_assets_returns, sample_row])
-        self.assets_data['returns_t'] = sample_row.T
-        # .T --> used to obtain the transpose of a given array.
+    def __repr__(self):
+        return f"node_n_from_period_{self.date}"
+
+    def init_values(self, parent):
+        if self.root is False:
+            self.parent = parent
+            self.assets_data = parent.assets_data
+            self.cash_data = parent.cash_data
+        else:
+            self.assets_data = parent.dropna()
+            self.cash_data = self.assets_data.tail(1)[['currency', 'weight', 'n_assets']]
+
+    def compute_returns(self, returns: pd.DataFrame):
+        """
+        gets a random sample of returns from each assets, then adjusts the returns sampled to get unique values
+
+        I NUMERI CHE DA COME RISULTATI SONO ASSURDI... DOBBIAMO CAPIRE COME SISTEMARE LA COSA
+        NON C'E' MODO. SEMPLICEMENTE ASSURDI. COME MAI?
+
+        FORSE DOVREMO RICORRERE AD USARE LE DISTRIBUZIONI IMPLICITE, CHE RENDEREBBERO INUTILE CALCOLARE L'ALBERO
+        PROBABILMENTE BY THE WAY...
+        NEL QUAL CASO, PERO', SI PRENDE CODICE COME DA MC SIMULATIONS E SI PASSA COME MEDIA A_I, COME SIGMA SIGMA_2
+        E COME DISTRIBUZIONE QUELLA USATA ANCHE PER IL EGARCH:
+                    z = np.random.normal(size=(1, returns.columns))
+                    l_tri = np.linalg.cholesky(self.cov_matrix) -> QUESTO RENDE INUTILE IL CALCOLO DELLE PROB...
+                    OLTRE AD ESSERE INUTILE PER LA RAPPRESENTAZIONE EMPIRICA. SOSTITUISCILO CON ALTRO...
+                    DOVRESTI CALCOLARE SEPARATAMENTE LE VARIANZE DI CIASCUN TITOLO (?)
+                    period_ret = mean_matrix_df + np.inner(l_tri, z)
+        IN OGNI CASO SONO SICUR NON RISOLVERA' IL PROBLEMA...
+        """
+        # vectorize/thread that maybe:
+        sampled = [returns[column].dropna().sample().reset_index(drop=True) for column in returns.columns]
+        self.assets_data['returns_t'] = 1 + pd.concat(sampled, axis=1).T
+        # self.assets_data['returns_t'] = self.assets_data.apply(
+        #     lambda x: 1 + random.normalvariate(x.a_i, x.sigma_t), axis=1
+        # )
         # ... update close_prices:
-        self.assets_data['close_prices_t'] = self.assets_data['close_prices_t_m_1'] * (1 + self.assets_data['returns_t'])
-        return sample_row
+        self.assets_data['close_prices_t'] = self.assets_data['close_prices_t'] * self.assets_data['returns_t']
+        # now, check on prices, if they are absurd, we need to replace them i think...
 
-    def compute_residuals(self):
-        residuals = (self.realized_returns - self.assets_data['a_i'].T) * 100 #a_i sono i ritorni medi
-        # updates the inherited residuals data...
-        self.inherited_returns_residuals = pd.concat([self.inherited_returns_residuals, residuals])
-        return residuals
+    def compute_residuals(self) -> pd.DataFrame:
+        residuals = (self.assets_data['returns_t'] - 1 - self.assets_data['a_i']) * 100
+        return residuals.T
 
     def compute_variances(self):
         if self.root is False:
@@ -129,94 +167,181 @@ class ScenarioNode:
             dummy = self.assets_data
             # rescaling a_i and sigma:
             dummy['sigma_t'] = self.assets_data['sigma_t'] * 100
-            # forecasted variances, to be taken also when measuring probabilities of future sibling nodes
-            """
-            poiché prendiamo solo l'ultimo valore, allora non ha senso passare l'intera matrice dei ritorni.
-            Tra l'altro, per non alterare i risultati, vorremmo proprio mescare solo dai valori realizzati al momento
-            dell'investimento in ogni caso (?)
-            """
-            for column in self.inherited_assets_returns:
-                e_i = self.inherited_returns_residuals[column].tail(1).values[0]
-                omega, alpha, gamma_, beta, sigma_t_m_1 = dummy[['omega', 'alpha[1]', 'gamma[1]', 'beta[1]', 'sigma_t']].loc[column].to_list()
-                sigma_2 = egarch_formula(e_i, omega, alpha, gamma_, beta, sigma_t_m_1)
-                self.assets_data.loc[column, 'sigma_t'] = sigma_2
-        else:
-            pass
+            dummy['e_i'] = self.compute_residuals()
+            self.assets_data['sigma_t'] = dummy[['e_i', 'omega', 'alpha[1]', 'gamma[1]', 'beta[1]', 'sigma_t']].apply(
+                lambda x: egarch_formula(x[0], x[1], x[2], x[3], x[4], x[5]), axis=1
+            )
+            self.assets_data = self.assets_data.drop('e_i', axis=1)
         return pd.DataFrame(np.diag(self.assets_data['sigma_t']**2), index=self.assets_data.index, columns=self.assets_data.index)
-    #.diag(v, k) --> function creates a diagonal matrix or extracts the diagonal elements of a matrix. sulla diagonale ci sono le sigma_2 degli asset
-    # The default value of k is 0. Use k>0 for diagonals above the main diagonal, and k<0 for diagonals below the main diagonal.
 
-    def compute_covariances(self):
-        # it will me used when measuring probabilities of future sibling nodes
-        cov_matrix = np.dot(self.conditional_variances, np.dot(self.corr_matrix, self.conditional_variances))
-        #.dop() --> Dot product of two arrays, matrix or scalar
+    def compute_covariances(self, cor_matrix: pd.DataFrame) -> pd.DataFrame:
+        cov_matrix = np.dot(self.conditional_variances, np.dot(cor_matrix, self.conditional_variances))
         return pd.DataFrame(cov_matrix, index=self.assets_data.index, columns=self.assets_data.index)
-        #.dataFrame() --> is a 2 dimensional data structure, or a table with rows and columns.
-        #nameOfTheDataframe.loc[0] --> return the column 0 of the data frame
+
+    def sibling_nodes(
+            self, parent, returns: pd.DataFrame, cor_matrix: pd.DataFrame,
+            optimization_func: callable = None, matrix_cols=None, date=None
+    ):
+        """
+        qui passiamo come input i dati del parent, come istanza:
+        parent = matrice.iloc[row, col].values[0]
+        poi, procediamo a fare processo 2) [Nodo(False, self.metodo(), matrice.iloc[row, col]) for _ in matrix.columns]
+        calcoliamo poi le probabilità come da processo 3) prob_measure_function (DA CREARE)
+        teriminiamo ritornando la lista aggiornata 4) [completed_sibling_nodes]
+
+        per funzione di ottimizzazione delle probabilità, di seguito si alla uno schema per la definizione dei constraint:
+        {"type": "eq", "fun": lambda x: np.sum(x) - 1},  # sum of probabilities == 1
+        for node in nodes:
+            for i in assets:
+                {"type": "eq", "fun": lambda x: sum(r_i_s * x) + m1_i_plus - m1_i_minus - a_i}
+                {"type": "eq", "fun": lambda x: sum(((r_i_s - a_i)**2) * x) + m2_i_plus - m2_i_minus - sigma_2_i}
+                {"type": "eq", "fun": lambda x: sum(((r_i_s - a_i)**3) * x) + m3_i_plus - m3_i_minus - moment_3_i}
+                {"type": "eq", "fun": lambda x: sum(((r_i_s - a_i)**4) * x) + m4_i_plus - m4_i_minus - moment_4_i}
+            # poi, matrice diagonale, per le covarianze:
+            # i valori per così come è scritto il codice si duplicano, possiamo calcolare la metà dei constraint, dobbiamo caipre come
+            for i in assets:
+                for l in assets:
+                    if i != l:
+                        {"type": "eq", "fun": lambda x: sum((r_i_s - a_i)*(r_l_s - a_l) * x) - covariance_i_l}
+        dove sigma_2_i, covariance_i_l e i momenti sono presi, rispettivamente:
+            forecast nodo parent
+            albero (definiti costanti)
+            albero (definiti costanti)
+            forecast nodo parent
+
+        dove la funzione obiettivo sarà:
+        assets_data = []
+        for i in assets:
+            moment_data_i = []
+            for moment in moments_i:
+                moment_data_i.append(moment_weight_i * (mk_i_plus + mk_i_minus))
+            cov_data_i = []
+            for weight_cov in weight_covs_il:
+                cov_data_i.append(weight_cov * (cil_plus + cil_minus))
+            moment_sum_i = sum(moment_data)
+            cov_sum_i = sum(cov_data_i)
+            assets_data.append(moment_sum_i + cov_sum_i)
+        min(sum(assets_data))
+
+        dove, i pesi per ciascun moemnto e per ciascun fattore di covarianza sono definiti,
+        per ogni asset, all'inizializzazione dell'albero.
+        Serve un modo per connettere failmente ed efficientemente questi valori ai valori dei momenti stessi
+        di ciascun asset...
+
+        Per la prossima settimana, dobbiamo aver finito di lavorare a questa parte ed averla integrata definitivamente
+        """
+        """
+        1 -> parent
+        2 -> nodi_fratelli= [Nodo(False, self.metodo(), parent) for _ in matrix_cols]
+        3 -> optimization_func(dati_del_parent, nodi_fratelli, dati_dell'albero) -> [lista nodi aggiornati]
+        """
+        return [ScenarioNode(False, parent, returns, cor_matrix, period_date=date) for _ in matrix_cols]
+
+    def generateSonMultithreadedHybrid(self, matrice, contatore, horizon, returns, cor_matrix):
+        """
+        IL CODICE HA QUALCHE PROBLEMA NEL CALCOLO DEI DATI NEI NODI. IN PARTICOLARE, QUANDO SI COMINCIA AD AUMENTARE IL
+        NUMERO DI NODI GENERATI PER PERIODO, I CALCOLI FATTI RITORNANO RISULTATI ASSOLUTAMENTE ASSURDI. SE INVECE SI
+        FANNO MENO NODI, I RISULTATI SONO QUANTO MENO VEROSIMILI. DOBBIAMO CAPIRE COME RISOLVERE QUESTO ERRORE
+        COMPUTAZIONALE CHE SI VERIFICA
+        """
+        if contatore <= horizon:
+            print(matrice.size)
+            print('contatore: ', contatore)
+            if matrice.size == 1:
+                row, col = 0, 0
+                print("10 figli")
+                matrix = pd.DataFrame(columns=['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'])
+                matrix.loc[len(matrix)] = [
+                    ScenarioNode(False, matrice.iloc[row, col], returns, cor_matrix, period_date=contatore) for _ in matrix.columns
+                ]
+            else:
+                print("3 figli")
+                parents = matrice.to_numpy().flatten()
+                matrix_cols = ['0', '1', '2']
+                if contatore <= 8:
+                    matrix = pd.DataFrame(columns=matrix_cols)
+                    for parent in parents:
+                        matrix.loc[len(matrix)] = [ScenarioNode(False, parent, returns, cor_matrix, period_date=contatore) for _ in matrix.columns]
+                else:
+                    threads = 3 if contatore < 13 else 8
+                    print('with threads: ', threads)
+                    with Pool(threads) as po:
+                        mapped = po.map(partial(
+                            # funzione da iterare
+                            self.sibling_nodes,
+                            # parametri opzionali
+                            returns=returns,
+                            cor_matrix=cor_matrix,
+                            optimization_func=None,
+                            matrix_cols=matrix_cols,
+                            date=contatore
+                            # lista di parametri principale
+                        ), parents)
+                    matrix = pd.DataFrame(mapped)
+
+            print(matrix)
+            print(f'example at time: {contatore}')
+            print(matrix.loc[0].head(1).values[0].assets_data)
+            self.generateSonMultithreadedHybrid(matrix, contatore + 1, horizon, returns, cor_matrix)
 
 
 class NewTree:
-    def __init__(self, assets, horizon, cash_return, period='1month'): #sono variabili prese da input
-        # Define inputs and starters:
-        #self.assents = assets --> sarà il file json
+    def __init__(
+            self,
+            assets_df: pd.DataFrame,
+            assets_returns_data: pd.DataFrame,
+            current_assets_prices: pd.DataFrame,
+            assets_json: json = None,
+            horizon=12,
+            cash_return=.01,  # probably to take it out from here...
+            period='1month',
+            cash_currency='EUR'
+    ):  # sono variabili prese da input
+        self.portfolio = pd.DataFrame(assets_json).T  # a sto punto, json file prende anche currency (?)
+        # in oltre, passi assets_prices subito nel dataframe da fuori, così che da qui...
+        self.assets = pd.concat([assets_df[['stock_id', 'currency']].set_index('stock_id'), self.portfolio], axis=1)
+        self.assets['close_prices_t'] = current_assets_prices['close'].astype('float64')
+        # ... a qui è fatto tutto fuori dalla classe
+        self.assets.loc['cash', 'currency'] = cash_currency
+
         self.period = period
-        self.dt = 1 / horizon
         self.horizon = horizon  # Number of time periods (e.g. 12 months)
         self.cash_return = cash_return  # Return on cash asset. Not the rf rate, but the return on YOUR cash asset...
 
-        self.assets = assets[['stock_id', 'symbol', 'exchange', 'currency']]
-        assets_dataframe = pd.read_parquet('assets_dataframe.parquet')
-        # self.returns_data = self.assets_returns()  # Monthly returns for n assets
-        self.returns_data = pd.read_parquet('assets_returns.parquet')
-        print(self.returns_data)
-
+        self.returns_data = assets_returns_data
         self.corr_matrix = self.returns_data.corr()  # Constant correlation matrix
-        #.corr() --> is used to find the pairwise correlation of all columns in the. (in pratica crea
+        # .corr() --> is used to find the pairwise correlation of all columns in the. (in pratica crea
         # una matrice con diagonale principale = 1, nelle parentesi si può aggiungere un metodo di correlazione)
-
-        self.assets = self.assets.set_index('stock_id')
-        #.set_index() --> used to set the DataFrame index using existing columns
-
-        self.garch_params, self.residuals = self.compute_egarch_params() #function
-        self.compute_moments() #function
+        self.garch_params, self.residuals = self.compute_egarch_params()  # function
+        self.compute_moments()  # function
         self.assets[['omega', 'alpha[1]', 'gamma[1]', 'beta[1]', 'sigma_t']] = self.garch_params
-        self.assets['close_prices_t'] = 1 #sono normalizzati, andranno presi tramite una funzione
-        # CREATES THE SERIES OF NODES:
-        self.scenario_nodes = self.scenario_nodes_2(stage_1=50) # numero scelto
-        print(self.scenario_nodes)
+        print('initial assets data: ')
+        print(self.assets)
+        # print(self.returns_data)
         # End of inputs and starters definition...
-        self.root_node = ScenarioNode(is_root=True, ad=self.assets, corr_matrix=self.corr_matrix, in_ret=self.returns_data,
-                                      in_res=self.residuals, period_date=self.returns_data.index[-1])
-        # non viene passato il parent in questo ScenarioNode
-        self.scenario_period_nodes = [[[self.root_node]]]
-        # print(self.corr_matrix)
-
-    def assets_returns(self):
-        """Non serve questa funzione ora, gli asset returns sono aperti direttamente dal file parquet"""
-        # ast_list = self.assets.reset_index()[['stock_id', 'symbol', 'exchange']].to_numpy()
-        # tr = min(20, len(ast_list))
-        # assets_returns = assets_returns_matrix(ast_list, log_return=False, is_index=False, eq_length=False, cons=11, threads=tr, period=self.period)
-        # assets_returns.to_parquet('assets_returns.parquet')
-        # return assets_returns
+        # now, set class parameters of ScenarioNode:
+        self.root_node = ScenarioNode(root=True, parent=self.assets, returns=self.returns_data, cor_matrix=self.corr_matrix)
+        print('assets data of root node:')
+        print(self.root_node.assets_data)
 
     def compute_egarch_params(self):
         eam_params_list = []
         residuals_df = []
         for column in self.returns_data:
             rets = self.returns_data[column].dropna() * 100
-            eam = arch_model(rets, p=1, q=1, o=1, mean='constant', power=2.0, vol='EGARCH', dist='normal') # --> ??????????
-            #arch_model() --> I modelli ARCH sono una classe popolare di modelli di volatilità che utilizzano valori osservati di rendimenti o residui come shock di volatilità
+            eam = arch_model(rets, p=1, q=1, o=1, mean='constant', power=2.0, vol='EGARCH', dist='normal')  # --> ??????????
+            # arch_model() --> I modelli ARCH sono una classe popolare di modelli di volatilità che utilizzano valori osservati di rendimenti o residui come shock di volatilità
 
             eam_fit = eam.fit(disp='off')
-            #.fit() --> estimate the arch model
-            eam_params = eam_fit.params # ritorna A (A = a_i), alfa, beta, gamma, omega
+            # .fit() --> estimate the arch model
+            eam_params = eam_fit.params  # ritorna A (A = a_i), alfa, beta, gamma, omega
             last_vol = eam_fit.conditional_volatility.tail(1).values[0]  # make sure is volatility and not variance...
-            #conditional_volatility --> ??
+            # conditional_volatility --> ??
             # now adjust if value is incredibly high:
             if last_vol > 1000:
                 last_vol = last_vol / 1000
             eam_params['sigma_t'] = last_vol / 100  # scaling sigma to decimals
-            residual_list = eam.resids(eam_params['mu'], [rets]) #mu è la versione percentuale di a_i
+            residual_list = eam.resids(eam_params['mu'], [rets])  # mu è la versione percentuale di a_i
             # A residual is the difference between an observed value and a predicted value in a regression model
 
             residuals = pd.DataFrame(residual_list.T, columns=[column], index=rets.index)
@@ -228,95 +353,35 @@ class NewTree:
 
         df = pd.concat(eam_params_list, axis=1).T
         residuals_df = pd.concat(residuals_df, axis=1)
-        print(residuals_df)
         df.index.name = 'stock_id'
         self.assets['a_i'] = df['mu'] / 100
 
         return df[['omega', 'alpha[1]', 'gamma[1]', 'beta[1]', 'sigma_t']], residuals_df
 
     def compute_moments(self):
-        for i, row in self.assets.iterrows():
-            self.assets.loc[i, 'third_moment'] = stats.moment(self.returns_data[i].dropna(), moment=3, nan_policy='propagate')  # skewness
-            self.assets.loc[i, 'fourth_moment'] = stats.moment(self.returns_data[i].dropna(), moment=4, nan_policy='propagate')  # kurtosis
+        for i, row in self.assets.dropna().iterrows():
+            self.assets.loc[i, 'third_moment'] = stats.moment(
+                self.returns_data[i].dropna(), moment=3, nan_policy='propagate'
+            )  # skewness
+            self.assets.loc[i, 'fourth_moment'] = stats.moment(
+                self.returns_data[i].dropna(), moment=4, nan_policy='propagate'
+            )  # kurtosis
             # .loc --> used to access a group of rows and columns by label(s) or a boolean array
 
     def compute_moments_weight(self):
         """
         using principal component analysis (PCA), gets the weights for each moment deviation, same for covariances.
+
+        For now, be naive, 1/4 for each weight in moments so you have them directly in formula.
+        same for cov factors weight
         """
         return 0
-
-    def objective_function(self):
-        """
-        defined here the objective function
-        """
-        return 0
-
-    def compute_optimal_probabilities(self):
-        """
-        Minimizes the objective function, I do not know how...
-        But! The optimum is measured on each group of sibling nodes. This means that m+ and m- are computed here, they
-        are actually scenario dependent (parent-node dependent...) Find a linear optimizer to use for that purpose...
-
-        start defining constraints (from 24 - 30), and then use minimize function on self.objective_function
-        """
-        n_assets = len(self.assets)
-        constraints = ({"type": "eq", "fun": lambda x: np.sum(x) - 1},  # sum of probabilities == 1
-                       {"type": "eq", "fun": lambda x: sum(r_i_s * x) - a_i},  # r_i == a_i for each i
-                       {"type": "eq", "fun": lambda x: sum(((r_i_s - a_i)**2) * x) - sigma_2},  # 26 const.
-                       )
-
-        bounds = tuple(self.bound for x in range(n_assets))
-        return 0
-
-    def scenario_nodes_2(self, stage_1):
-        """base node, with index = 0, is always 1; then, from it...
-        Returns a dataframe with the nodes for each parent node and the total nodes for each period"""
-        periods = self.horizon + 1
-        nodes_json = [{'siblings_nodes': 2} for _ in range(periods)] # crea una colonna di 2
-        nodes_series = pd.DataFrame(nodes_json).reset_index(drop=True)
-        nodes_series.loc[0, 'siblings_nodes'] = 1
-        nodes_series.loc[1, 'siblings_nodes'] = stage_1
-        return nodes_series
-
-    def sibling_nodes_gen(self, parent, n_siblings):
-        """n_siblings is a range of elements to create, parent is an instance of ScenarioNode class"""
-        sibling_nodes = []
-        for _ in n_siblings:  # make it a thread...
-            sibling_node = ScenarioNode(ad=parent.assets_data, parent=parent, corr_matrix=self.corr_matrix,
-                                        in_ret=parent.inherited_assets_returns, in_res=parent.inherited_returns_residuals,
-                                        period_date=parent.date + relativedelta(months=1))
-            sibling_nodes.append(sibling_node)
-        # APPLY HERE OPTIMIZATION PROBLEM!
-        return sibling_nodes
 
     def test_node(self):
-        # for now, then, try to pass them directly from the init function:
-        # STARTS CREATING THE ROOT_NODE'S SONS:
-        # WORK IN PROGRESS!!! NEED TO BE SPED UP!
-        for i, row in self.scenario_nodes.iterrows():  # speed it up! Vectorized my brother! or apply...
-            if i != 0:
-                print(len(self.scenario_period_nodes))
-                parent_nodes = self.scenario_period_nodes[-1]
-                # merge parents in a single list:
-                if len(parent_nodes) == 1:
-                    parent_nodes = parent_nodes[0]
-                else:
-                    parent_nodes = list(itertools.chain.from_iterable(parent_nodes))  # merges in single list all parents
-                print('number of parents: ', len(parent_nodes))
-                print('parents: ', parent_nodes)
-                sibling_nodes = range(row[0])
-                print('sons per parent: ', sibling_nodes)
-                # the process below must be accelerated...
-                period_nodes = []
-                for parent in parent_nodes:
-                    print('the parent: ', parent, i)
-                    siblings = self.sibling_nodes_gen(parent, sibling_nodes)
-                    period_nodes.append(siblings)
-                self.scenario_period_nodes.append(period_nodes)
-        # THE TREE IS ULTIMATED, HERE HIS DATA. NOW, HOW TO SAVE IT? HOW TO MANAGE EGARCH VOL ERRORS?
-        print(self.scenario_period_nodes)
-        print([len(i) for i in self.scenario_period_nodes if i != 0])
+        init_matrix = pd.DataFrame({self.root_node})
+        print(init_matrix)
+        counter = 0
+        self.root_node.generateSonMultithreadedHybrid(init_matrix, counter, self.horizon, self.returns_data, self.corr_matrix)
 
 # %%
 
@@ -482,13 +547,12 @@ if __name__ == "__main__":
 
     start = timeit.default_timer()
 
-    nodoAlternativo = NodoAlternativo(True, 1, None)
+    nodoAlternativo = Nodo(True, 1, None)
     matrice = pd.DataFrame({nodoAlternativo})
     print(matrice)
     contatore = 0
     nodoAlternativo.generateSonMultithreadedHybrid(matrice, contatore)
     # dataframe = pd.read_json("assets.json")
-    print(nodoAlternativo.matrix_list)
     stop = timeit.default_timer()
     minutes = (stop - start) / 60
     print('full minutes: ', minutes)
