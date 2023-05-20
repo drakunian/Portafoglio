@@ -154,10 +154,7 @@ class NewTree:
         # min(sum(assets_data))
         return moment_weights
 
-    def sibling_nodes(
-            self, parent, returns: pd.DataFrame, cor_matrix: pd.DataFrame,
-            optimization_func: callable = None, matrix_cols=None, date=None
-    ) -> list:
+    def sibling_nodes(self, parent, optimization_func: callable = None, matrix_cols=None, date=None) -> list:
         """
         qui passiamo come input i dati del parent, come istanza:
         parent = matrice.iloc[row, col].values[0]
@@ -227,9 +224,9 @@ class NewTree:
         ogni asset prende le probabilità, procede ad outputtare le proprie deviazioni fornendole all'effettiva funzione
         obiettivo...
         """
-        return [ScenarioNode(False, parent, returns, cor_matrix, period_date=date) for _ in matrix_cols]
+        return [ScenarioNode(False, parent, self.ret_list, self.corr_matrix, period_date=date) for _ in matrix_cols]
 
-    def generate_tree(self, init_matrix, returns, cor_matrix):
+    def generate_tree(self, init_matrix):
         """
         PER ORA, GENERARE 8 PERIODI IN QUESTO MODO RICHIEDE: 5.0 minuti e 37 secondi UTILIZZANDO TUTTI I CORES.
         NON MALE, MA PER GENERARNE 12 DIVENTA ABBASTANZA LENTO.
@@ -246,8 +243,7 @@ class NewTree:
                 print("10 figli")
                 matrix = pd.DataFrame(columns=['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'])
                 matrix.loc[len(matrix)] = self.sibling_nodes(
-                    init_matrix.iloc[row, col], returns, cor_matrix,
-                    optimization_func=None, matrix_cols=matrix.columns, date=counter
+                    init_matrix.iloc[row, col], optimization_func=None, matrix_cols=matrix.columns, date=counter
                 )
             else:
                 print("3 figli")
@@ -257,14 +253,12 @@ class NewTree:
                     matrix = pd.DataFrame(columns=matrix_cols)
                     for parent in parents:
                         matrix.loc[len(matrix)] = self.sibling_nodes(
-                            parent, returns, cor_matrix, optimization_func=None, matrix_cols=matrix_cols, date=counter
+                            parent, optimization_func=None, matrix_cols=matrix_cols, date=counter
                         )
                 else:
                     with Pool() as po:
                         mapped = po.map(partial(
                             self.sibling_nodes,
-                            returns=returns,
-                            cor_matrix=cor_matrix,
                             optimization_func=None,
                             matrix_cols=matrix_cols,
                             date=counter
@@ -280,10 +274,9 @@ class NewTree:
 
     def test_node(self):
         init_matrix = pd.DataFrame({self.root_node})
-        self.generate_tree(
-            init_matrix, self.ret_list, self.corr_matrix
-        )
-        print(self.root_node.periods)
+        # save initial matrix somewhere like a parquet file, just make sure that it saves entire instances in the cells
+        self.generate_tree(init_matrix)
+        print(self.periods)
 
 # %%
 
