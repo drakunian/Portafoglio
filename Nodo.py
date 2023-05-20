@@ -1,5 +1,7 @@
 from functools import partial
 # import pyarrow
+from math import e
+
 import numpy as np
 import pandas as pd
 from multiprocessing import Pool, freeze_support
@@ -21,20 +23,16 @@ def egarch_formula(e_i, omega, alpha, gamma_, beta, sigma_t_m_1): #da mettere ne
 
 
 class ScenarioNode:
-    # CLASS DATA NON FUNZIONA CON IL MULTITHREADING!
-    # assets_returns: pd.DataFrame
-    # residuals: pd.DataFrame
-    # corr_matrix: pd.DataFrame
-
     """collects all data about the given node: the node id, to identify the node on the tree; the realized returns and
     all the other node events (such as cashflows and dividends...).
     On the node will then be collected data about decisions and realizations for the portfolio being optimized..."""
-    def __init__(self, root: bool, parent, returns: pd.DataFrame, cor_matrix: pd.DataFrame, period_date=None):
+    def __init__(
+            self, root: bool, parent, returns: pd.DataFrame, cor_matrix: pd.DataFrame, period_date=None
+    ):
         self.root = root
         self.date = period_date  # to be used for index of new row of returns
         self.parent = None
         self.assets_data = None
-        self.cash_data = None
         self.init_values(parent)  # modifies data of above parameters
 
         self.compute_returns(returns)
@@ -52,6 +50,11 @@ class ScenarioNode:
         then, from cash_flows period subtract/add cash moved by investor to the portfolio and then execute rebalancing
         code
         """
+        # here we initialize the cash data, to be iterated through the tree:
+        self.cash_data = None  # self.assets_data.tail(1)[['currency', 'weight', 'n_assets']]
+        # maybe pass those two to all nodes as parameters...
+        self.cashflows_data = None
+        self.dividends = None
         self.rebalancing_vector = []  # vector of shares/value to buy (+) or sell (-) of each asset
 
     def __str__(self):
@@ -64,10 +67,8 @@ class ScenarioNode:
         if self.root is False:
             self.parent = parent
             self.assets_data = parent.assets_data
-            self.cash_data = parent.cash_data
         else:
-            self.assets_data = parent.dropna()
-            self.cash_data = self.assets_data.tail(1)[['currency', 'weight', 'n_assets']]
+            self.assets_data = parent
 
     def compute_returns(self, returns: pd.DataFrame):
         """
@@ -88,6 +89,7 @@ class ScenarioNode:
         IN OGNI CASO SONO SICUR NON RISOLVERA' IL PROBLEMA...
         """
         # vectorize/thread that maybe:
+        # WIP!!! ON THAT ONE?
         sampled = [returns[column].dropna().sample().reset_index(drop=True) for column in returns.columns]
         self.assets_data['returns_t'] = 1 + pd.concat(sampled, axis=1).T
         # self.assets_data['returns_t'] = self.assets_data.apply(
@@ -101,18 +103,39 @@ class ScenarioNode:
         residuals = (self.assets_data['returns_t'] - 1 - self.assets_data['a_i']) * 100
         return residuals.T
 
-    def compute_variances(self):
+    def compute_variances(self) -> pd.DataFrame:
         if self.root is False:
             # IF YOU SOLVE THE EGARCH PROBLEM, YOU CAN SUBSTITUTE HERE WITH THE EGARCH FORMULA FROM ARCH!
+            # WOULD BE NICE TO REDUCE NUMBER OF PASSAGES, IF IT DIDN'T RESULT IN ABSURD VALUES...
             dummy = self.assets_data
-            # rescaling a_i and sigma:
+            # here lies the problem with shortening code...
             dummy['sigma_t'] = self.assets_data['sigma_t'] * 100
-            dummy['e_i'] = self.compute_residuals()
-            self.assets_data['sigma_t'] = dummy[['e_i', 'omega', 'alpha[1]', 'gamma[1]', 'beta[1]', 'sigma_t']].apply(
-                lambda x: egarch_formula(x[0], x[1], x[2], x[3], x[4], x[5]), axis=1
-            )
-            self.assets_data = self.assets_data.drop('e_i', axis=1)
-        return pd.DataFrame(np.diag(self.assets_data['sigma_t']**2), index=self.assets_data.index, columns=self.assets_data.index)
+            dummy['e_val'] = self.compute_residuals() / dummy['sigma_t']
+            # self.assets_data['sigma_t'] = dummy[['e_i', 'omega', 'alpha[1]', 'gamma[1]', 'beta[1]', 'sigma_t']].apply(
+            #     # WIP!!! ON THAT FUNCTION, SPEED IT UP IN ITS CALCULATIONS...
+            #     lambda x: egarch_formula(x[0], x[1], x[2], x[3], x[4], x[5]), axis=1
+            # )
+            dummy['term_1'] = dummy['alpha[1]'] * (abs(dummy['e_val']) - np.sqrt(2/pi))
+            dummy['term_2'] = dummy['gamma[1]'] * dummy['e_val']
+            dummy['term_3'] = dummy['beta[1]'] * np.log(dummy['sigma_t']**2)
+
+            dummy['log_sigma_2'] = dummy['omega'] + dummy['term_1'] + dummy['term_2'] + dummy['term_3']
+            # print('dummy log_sigma_2:')
+            # print(dummy['log_sigma_2'])
+
+            # dummy.loc[dummy['log_sigma_2'] > 800, 'log_sigma_2'] = 0.001
+            # if abs(log_sigma_2) > 800:
+            #     return sigma_t_m_1 / 100
+            # else:
+            #     return np.sqrt(np.exp(log_sigma_2, dtype=np.float64)) / 100
+            self.assets_data['sigma_t'] = np.sqrt(e**dummy['log_sigma_2']) / 100
+            # really a dirty solution for now...
+            # WIP!!! THIS IS THE ULTIMATE PROBLEM TO SOLVE!
+            self.assets_data.loc[self.assets_data['sigma_t'] < 0.00001, 'sigma_t'] = 0.00001
+            self.assets_data = self.assets_data.drop(['e_val', 'term_1', 'term_2', 'term_3', 'log_sigma_2'], axis=1)
+        return pd.DataFrame(
+            np.diag(self.assets_data['sigma_t']**2), index=self.assets_data.index, columns=self.assets_data.index
+        )
 
     def compute_covariances(self, cor_matrix: pd.DataFrame) -> pd.DataFrame:
         cov_matrix = np.dot(self.conditional_variances, np.dot(cor_matrix, self.conditional_variances))
@@ -179,10 +202,10 @@ class ScenarioNode:
 
     def generateSonMultithreadedHybrid(self, matrice, contatore, horizon, returns, cor_matrix):
         """
-        IL CODICE HA QUALCHE PROBLEMA NEL CALCOLO DEI DATI NEI NODI. IN PARTICOLARE, QUANDO SI COMINCIA AD AUMENTARE IL
-        NUMERO DI NODI GENERATI PER PERIODO, I CALCOLI FATTI RITORNANO RISULTATI ASSOLUTAMENTE ASSURDI. SE INVECE SI
-        FANNO MENO NODI, I RISULTATI SONO QUANTO MENO VEROSIMILI. DOBBIAMO CAPIRE COME RISOLVERE QUESTO ERRORE
-        COMPUTAZIONALE CHE SI VERIFICA
+        PER ORA, GENERARE 8 PERIODI IN QUESTO MODO RICHIEDE: 5.0 minuti e 37 secondi UTILIZZANDO TUTTI I CORES.
+        NON MALE, MA PER GENERARNE 12 DIVENTA ABBASTANZA LENTO.
+        COME RISOLVERE? CI SONO MOMENTI IN CUI LA CPU NON E' USATA AL 100%. DOBBIAMO IDENTIFICARE COSA VIENE FATTO IN
+        QUEI MOMENTI E FAR SI CHE VENGA USATA APPIENO ANCHE LI
         """
         if contatore <= horizon:
             print(matrice.size)
@@ -192,22 +215,25 @@ class ScenarioNode:
                 print("10 figli")
                 matrix = pd.DataFrame(columns=['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'])
                 matrix.loc[len(matrix)] = [
-                    ScenarioNode(False, matrice.iloc[row, col], returns, cor_matrix, period_date=contatore) for _ in matrix.columns
+                    ScenarioNode(
+                        False, matrice.iloc[row, col], returns, cor_matrix, period_date=contatore
+                    ) for _ in matrix.columns
                 ]
             else:
                 print("3 figli")
                 parents = matrice.to_numpy().flatten()
                 matrix_cols = ['0', '1', '2']
-                if contatore <= 8:
+                if contatore < 5:
                     matrix = pd.DataFrame(columns=matrix_cols)
                     for parent in parents:
                         matrix.loc[len(matrix)] = [
                             ScenarioNode(False, parent, returns, cor_matrix, period_date=contatore) for _ in matrix.columns
                         ]
                 else:
-                    threads = 3 if contatore < 13 else 8
-                    print('with threads: ', threads)
-                    with Pool(threads) as po:
+                    # threads = 6 if contatore < 13 else 4
+                    # print('with threads: ', threads)
+                    # SE NON SI PASSANO PARAMETRI, USERA' TUTTI I CORES, CHE è IL RISULTATO OTTIMALE
+                    with Pool() as po:
                         mapped = po.map(partial(
                             # funzione da iterare
                             self.sibling_nodes,

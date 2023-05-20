@@ -53,13 +53,12 @@ class NewTree:
     def __init__(
             self,
             assets_df: pd.DataFrame,
-            assets_returns_data: pd.DataFrame,  # dovremmo caricare qui anche il file con i ritorni giornalieri...
+            assets_returns_data: pd.DataFrame,
             horizon=12,
-            cash_return=.01,  # probably to take it out from here
+            cash_return=.01,
             period='1month',
             cash_currency='EUR'
     ):  # sono variabili prese da input
-        # ... a qui è fatto tutto fuori dalla classe
         self.assets = assets_df
         self.assets.loc['cash', 'currency'] = cash_currency
 
@@ -71,19 +70,21 @@ class NewTree:
         self.corr_matrix = self.returns_data.corr()  # Constant correlation matrix
         # .corr() --> is used to find the pairwise correlation of all columns in the. (in pratica crea
         # una matrice con diagonale principale = 1, nelle parentesi si può aggiungere un metodo di correlazione)
-        self.garch_params, self.residuals = self.compute_egarch_params()  # function
+        self.assets[['omega', 'alpha[1]', 'gamma[1]', 'beta[1]', 'sigma_t']] = self.compute_egarch_params()  # function
         self.compute_moments()  # function
-        self.assets[['omega', 'alpha[1]', 'gamma[1]', 'beta[1]', 'sigma_t']] = self.garch_params
+        # self.assets[['omega', 'alpha[1]', 'gamma[1]', 'beta[1]', 'sigma_t']] = self.garch_params
         print('initial assets data: ')
         print(self.assets)
         # print(self.returns_data)
         # End of inputs and starters definition...
         # now, set class parameters of ScenarioNode:
-        self.root_node = ScenarioNode(root=True, parent=self.assets, returns=self.returns_data, cor_matrix=self.corr_matrix)
+        self.root_node = ScenarioNode(
+            root=True, parent=self.assets.dropna(), returns=self.returns_data, cor_matrix=self.corr_matrix
+        )
         print('assets data of root node:')
         print(self.root_node.assets_data)
 
-    def compute_egarch_params(self):
+    def compute_egarch_params(self) -> pd.DataFrame:
         eam_params_list = []
         residuals_df = []
         for column in self.returns_data:
@@ -100,22 +101,22 @@ class NewTree:
             if last_vol > 1000:
                 last_vol = last_vol / 1000
             eam_params['sigma_t'] = last_vol / 100  # scaling sigma to decimals
-            residual_list = eam.resids(eam_params['mu'], [rets])  # mu è la versione percentuale di a_i
-            # A residual is the difference between an observed value and a predicted value in a regression model
 
-            residuals = pd.DataFrame(residual_list.T, columns=[column], index=rets.index)
+            # residual_list = eam.resids(eam_params['mu'], [rets])  # mu è la versione percentuale di a_i
+            # A residual is the difference between an observed value and a predicted value in a regression model
+            # residuals = pd.DataFrame(residual_list.T, columns=[column], index=rets.index)
             # print(eam_fit.conditional_volatility[-1])
             # eam_params['sigma_0'] = eam_fit.conditional_volatility[-1]
             eam_params.name = column
             eam_params_list.append(eam_params)
-            residuals_df.append(residuals)
+            # residuals_df.append(residuals)
 
         df = pd.concat(eam_params_list, axis=1).T
-        residuals_df = pd.concat(residuals_df, axis=1)
+        # residuals_df = pd.concat(residuals_df, axis=1)
         df.index.name = 'stock_id'
         self.assets['a_i'] = df['mu'] / 100
 
-        return df[['omega', 'alpha[1]', 'gamma[1]', 'beta[1]', 'sigma_t']], residuals_df
+        return df[['omega', 'alpha[1]', 'gamma[1]', 'beta[1]', 'sigma_t']]  # , residuals_df
 
     def compute_moments(self):
         for i, row in self.assets.dropna().iterrows():
@@ -140,7 +141,9 @@ class NewTree:
         init_matrix = pd.DataFrame({self.root_node})
         print(init_matrix)
         counter = 0
-        self.root_node.generateSonMultithreadedHybrid(init_matrix, counter, self.horizon, self.returns_data, self.corr_matrix)
+        self.root_node.generateSonMultithreadedHybrid(
+            init_matrix, counter, self.horizon, self.returns_data, self.corr_matrix
+        )
 
 # %%
 
