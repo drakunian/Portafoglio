@@ -154,6 +154,15 @@ class NewTree:
         # min(sum(assets_data))
         return moment_weights
 
+    def target_function(self, list_of_probabilities):
+        value = 'stuff computed using other intermediate functions'
+        return value
+
+    def optimization_func(self, dati_del_parent, nodi_fratelli, dati_dell_albero):
+        list_of_probabilities = ['dummy startuop list']
+        optimized = 'executes cplex code on target_function passing list of probabilities as x'
+        return list_of_probabilities
+
     def sibling_nodes(self, parent, optimization_func: callable = None, matrix_cols=None, date=None) -> list:
         """
         qui passiamo come input i dati del parent, come istanza:
