@@ -54,18 +54,13 @@ class NewTree:
             self,
             assets_df: pd.DataFrame,
             assets_returns_data: pd.DataFrame,  # dovremmo caricare qui anche il file con i ritorni giornalieri...
-            current_assets_prices: pd.DataFrame,
-            assets_json: json = None,
             horizon=12,
             cash_return=.01,  # probably to take it out from here
             period='1month',
             cash_currency='EUR'
     ):  # sono variabili prese da input
-        self.portfolio = pd.DataFrame(assets_json).T  # a sto punto, json file prende anche currency (?)
-        # in oltre, passi assets_prices subito nel dataframe da fuori, così che da qui...
-        self.assets = pd.concat([assets_df[['stock_id', 'currency']].set_index('stock_id'), self.portfolio], axis=1)
-        self.assets['close_prices_t'] = current_assets_prices['close'].astype('float64')
         # ... a qui è fatto tutto fuori dalla classe
+        self.assets = assets_df
         self.assets.loc['cash', 'currency'] = cash_currency
 
         self.period = period
@@ -297,25 +292,32 @@ def main(): #variabili prese da input
 
 if __name__ == "__main__":
 
-    # start = timeit.default_timer()
+    start = timeit.default_timer()
+    """
+    per velocizzare il codice per ora, si leggono ggli input direttamente dai file, poi, si sostituirà questa parte con
+    la funzione di raccolta di input che hai scritto
+    """
 
-    # #main()
-    # nodo = Nodo(True, 1, None)
-    # matrice = pd.DataFrame({nodo})
+    ast_json = json.loads(open('assets.json', 'r').read())
+    assets_df = pd.read_parquet('assets_df.parquet')
+    print(assets_df)
+    portfolio = pd.DataFrame(ast_json).T  # a sto punto, json file prende anche currency (?)
+    assets_df = pd.concat([assets_df[['stock_id', 'currency']].set_index('stock_id'), portfolio], axis=1)
+    current_assets_prices = pd.read_parquet('curr_assets_prices.parquet').set_index('stock_id')
+    assets_df['close_prices_t'] = current_assets_prices['close'].astype('float64')
+
+    ast_ret = pd.read_parquet('assets_returns.parquet').set_index('datetime')
+
+    tree = NewTree(
+        assets_df, ast_ret, horizon=8
+    )
+    tree.test_node()
+
+    # nodoAlternativo = ScenarioNode(True, 1, None)
+    # matrice = pd.DataFrame({nodoAlternativo})
     # print(matrice)
     # contatore = 0
-    # nodo.generateSon(matrice, contatore)
-    # # dataframe = pd.read_json("assets.json")
-    # stop = timeit.default_timer()
-    # print(stop-start)
-
-    start = timeit.default_timer()
-
-    nodoAlternativo = Nodo(True, 1, None)
-    matrice = pd.DataFrame({nodoAlternativo})
-    print(matrice)
-    contatore = 0
-    nodoAlternativo.generateSonMultithreadedHybrid(matrice, contatore)
+    # nodoAlternativo.generateSonMultithreadedHybrid(matrice, contatore)
     # dataframe = pd.read_json("assets.json")
     stop = timeit.default_timer()
     minutes = (stop - start) / 60
