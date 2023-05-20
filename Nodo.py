@@ -1,11 +1,10 @@
-from functools import partial
+
 # import pyarrow
 from math import e
 
 import numpy as np
 import pandas as pd
-from multiprocessing import Pool, freeze_support
-from numpy import ndarray
+from numpy import ndarray, pi
 
 
 def egarch_formula(e_i, omega, alpha, gamma_, beta, sigma_t_m_1): #da mettere nella classe tool per le due classi
@@ -25,10 +24,15 @@ def egarch_formula(e_i, omega, alpha, gamma_, beta, sigma_t_m_1): #da mettere ne
 class ScenarioNode:
     """collects all data about the given node: the node id, to identify the node on the tree; the realized returns and
     all the other node events (such as cashflows and dividends...).
-    On the node will then be collected data about decisions and realizations for the portfolio being optimized..."""
+    On the node will then be collected data about decisions and realizations for the portfolio being optimized...
+
+    The node by itself generates an executes all its methods in around 0.007422 seconds. So, how we can improve the
+    tree generation? Is all in the optimal employment of RAM and Threads/processes at this point"""
     def __init__(
             self, root: bool, parent, returns: pd.DataFrame, cor_matrix: pd.DataFrame, period_date=None
     ):
+        self.periods = []
+
         self.root = root
         self.date = period_date  # to be used for index of new row of returns
         self.parent = None
@@ -49,12 +53,13 @@ class ScenarioNode:
         Compute dividend_yield (for return purposes), Append annuities_period to the assets_data 
         then, from cash_flows period subtract/add cash moved by investor to the portfolio and then execute rebalancing
         code
+        Add cashflows of dividends as column in assets_data, passing it during each period
         """
         # here we initialize the cash data, to be iterated through the tree:
         self.cash_data = None  # self.assets_data.tail(1)[['currency', 'weight', 'n_assets']]
         # maybe pass those two to all nodes as parameters...
         self.cashflows_data = None
-        self.dividends = None
+        # self.dividends = None
         self.rebalancing_vector = []  # vector of shares/value to buy (+) or sell (-) of each asset
 
     def __str__(self):
@@ -73,29 +78,10 @@ class ScenarioNode:
     def compute_returns(self, returns: pd.DataFrame):
         """
         gets a random sample of returns from each assets, then adjusts the returns sampled to get unique values
-
-        I NUMERI CHE DA COME RISULTATI SONO ASSURDI... DOBBIAMO CAPIRE COME SISTEMARE LA COSA
-        NON C'E' MODO. SEMPLICEMENTE ASSURDI. COME MAI?
-
-        FORSE DOVREMO RICORRERE AD USARE LE DISTRIBUZIONI IMPLICITE, CHE RENDEREBBERO INUTILE CALCOLARE L'ALBERO
-        PROBABILMENTE BY THE WAY...
-        NEL QUAL CASO, PERO', SI PRENDE CODICE COME DA MC SIMULATIONS E SI PASSA COME MEDIA A_I, COME SIGMA SIGMA_2
-        E COME DISTRIBUZIONE QUELLA USATA ANCHE PER IL EGARCH:
-                    z = np.random.normal(size=(1, returns.columns))
-                    l_tri = np.linalg.cholesky(self.cov_matrix) -> QUESTO RENDE INUTILE IL CALCOLO DELLE PROB...
-                    OLTRE AD ESSERE INUTILE PER LA RAPPRESENTAZIONE EMPIRICA. SOSTITUISCILO CON ALTRO...
-                    DOVRESTI CALCOLARE SEPARATAMENTE LE VARIANZE DI CIASCUN TITOLO (?)
-                    period_ret = mean_matrix_df + np.inner(l_tri, z)
-        IN OGNI CASO SONO SICUR NON RISOLVERA' IL PROBLEMA...
         """
-        # vectorize/thread that maybe:
-        # WIP!!! ON THAT ONE?
-        sampled = [returns[column].dropna().sample().reset_index(drop=True) for column in returns.columns]
+        # delegate dropna and columns iteration to init in tree
+        sampled = [ret.sample().reset_index(drop=True) for ret in returns]
         self.assets_data['returns_t'] = 1 + pd.concat(sampled, axis=1).T
-        # self.assets_data['returns_t'] = self.assets_data.apply(
-        #     lambda x: 1 + random.normalvariate(x.a_i, x.sigma_t), axis=1
-        # )
-        # ... update close_prices:
         self.assets_data['close_prices_t'] = self.assets_data['close_prices_t'] * self.assets_data['returns_t']
         # now, check on prices, if they are absurd, we need to replace them i think...
 
@@ -120,17 +106,9 @@ class ScenarioNode:
             dummy['term_3'] = dummy['beta[1]'] * np.log(dummy['sigma_t']**2)
 
             dummy['log_sigma_2'] = dummy['omega'] + dummy['term_1'] + dummy['term_2'] + dummy['term_3']
-            # print('dummy log_sigma_2:')
-            # print(dummy['log_sigma_2'])
 
-            # dummy.loc[dummy['log_sigma_2'] > 800, 'log_sigma_2'] = 0.001
-            # if abs(log_sigma_2) > 800:
-            #     return sigma_t_m_1 / 100
-            # else:
-            #     return np.sqrt(np.exp(log_sigma_2, dtype=np.float64)) / 100
             self.assets_data['sigma_t'] = np.sqrt(e**dummy['log_sigma_2']) / 100
-            # really a dirty solution for now...
-            # WIP!!! THIS IS THE ULTIMATE PROBLEM TO SOLVE!
+            # WIP!!! THIS IS THE ULTIMATE PROBLEM TO SOLVE! really a dirty solution for now...
             self.assets_data.loc[self.assets_data['sigma_t'] < 0.00001, 'sigma_t'] = 0.00001
             self.assets_data = self.assets_data.drop(['e_val', 'term_1', 'term_2', 'term_3', 'log_sigma_2'], axis=1)
         return pd.DataFrame(
@@ -138,119 +116,9 @@ class ScenarioNode:
         )
 
     def compute_covariances(self, cor_matrix: pd.DataFrame) -> pd.DataFrame:
-        cov_matrix = np.dot(self.conditional_variances, np.dot(cor_matrix, self.conditional_variances))
+        sqrt_variances = np.sqrt(self.conditional_variances)
+        cov_matrix = np.dot(sqrt_variances, np.dot(cor_matrix, sqrt_variances))
         return pd.DataFrame(cov_matrix, index=self.assets_data.index, columns=self.assets_data.index)
-
-    def sibling_nodes(
-            self, parent, returns: pd.DataFrame, cor_matrix: pd.DataFrame,
-            optimization_func: callable = None, matrix_cols=None, date=None
-    ):
-        """
-        qui passiamo come input i dati del parent, come istanza:
-        parent = matrice.iloc[row, col].values[0]
-        poi, procediamo a fare processo 2) [Nodo(False, self.metodo(), matrice.iloc[row, col]) for _ in matrix.columns]
-        calcoliamo poi le probabilità come da processo 3) prob_measure_function (DA CREARE)
-        teriminiamo ritornando la lista aggiornata 4) [completed_sibling_nodes]
-
-        per funzione di ottimizzazione delle probabilità, di seguito si alla uno schema per la definizione dei constraint:
-        {"type": "eq", "fun": lambda x: np.sum(x) - 1},  # sum of probabilities == 1
-        for node in nodes:
-            for i in assets:
-                {"type": "eq", "fun": lambda x: sum(r_i_s * x) + m1_i_plus - m1_i_minus - a_i}
-                {"type": "eq", "fun": lambda x: sum(((r_i_s - a_i)**2) * x) + m2_i_plus - m2_i_minus - sigma_2_i}
-                {"type": "eq", "fun": lambda x: sum(((r_i_s - a_i)**3) * x) + m3_i_plus - m3_i_minus - moment_3_i}
-                {"type": "eq", "fun": lambda x: sum(((r_i_s - a_i)**4) * x) + m4_i_plus - m4_i_minus - moment_4_i}
-            # poi, matrice diagonale, per le covarianze:
-            # i valori per così come è scritto il codice si duplicano, possiamo calcolare la metà dei constraint, dobbiamo caipre come
-            for i in assets:
-                for l in assets:
-                    if i != l:
-                        {"type": "eq", "fun": lambda x: sum((r_i_s - a_i)*(r_l_s - a_l) * x) - covariance_i_l}
-        dove sigma_2_i, covariance_i_l e i momenti sono presi, rispettivamente:
-            forecast nodo parent
-            albero (definiti costanti)
-            albero (definiti costanti)
-            forecast nodo parent
-
-        dove la funzione obiettivo sarà:
-        assets_data = []
-        for i in assets:
-            moment_data_i = []
-            for moment in moments_i:
-                moment_data_i.append(moment_weight_i * (mk_i_plus + mk_i_minus))
-            cov_data_i = []
-            for weight_cov in weight_covs_il:
-                cov_data_i.append(weight_cov * (cil_plus + cil_minus))
-            moment_sum_i = sum(moment_data)
-            cov_sum_i = sum(cov_data_i)
-            assets_data.append(moment_sum_i + cov_sum_i)
-        min(sum(assets_data))
-
-        dove, i pesi per ciascun moemnto e per ciascun fattore di covarianza sono definiti,
-        per ogni asset, all'inizializzazione dell'albero.
-        Serve un modo per connettere failmente ed efficientemente questi valori ai valori dei momenti stessi
-        di ciascun asset...
-
-        Per la prossima settimana, dobbiamo aver finito di lavorare a questa parte ed averla integrata definitivamente
-        """
-        """
-        1 -> parent
-        2 -> nodi_fratelli= [Nodo(False, self.metodo(), parent) for _ in matrix_cols]
-        3 -> optimization_func(dati_del_parent, nodi_fratelli, dati_dell'albero) -> [lista nodi aggiornati]
-        """
-        return [ScenarioNode(False, parent, returns, cor_matrix, period_date=date) for _ in matrix_cols]
-
-    def generateSonMultithreadedHybrid(self, matrice, contatore, horizon, returns, cor_matrix):
-        """
-        PER ORA, GENERARE 8 PERIODI IN QUESTO MODO RICHIEDE: 5.0 minuti e 37 secondi UTILIZZANDO TUTTI I CORES.
-        NON MALE, MA PER GENERARNE 12 DIVENTA ABBASTANZA LENTO.
-        COME RISOLVERE? CI SONO MOMENTI IN CUI LA CPU NON E' USATA AL 100%. DOBBIAMO IDENTIFICARE COSA VIENE FATTO IN
-        QUEI MOMENTI E FAR SI CHE VENGA USATA APPIENO ANCHE LI
-        """
-        if contatore <= horizon:
-            print(matrice.size)
-            print('contatore: ', contatore)
-            if matrice.size == 1:
-                row, col = 0, 0
-                print("10 figli")
-                matrix = pd.DataFrame(columns=['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'])
-                matrix.loc[len(matrix)] = [
-                    ScenarioNode(
-                        False, matrice.iloc[row, col], returns, cor_matrix, period_date=contatore
-                    ) for _ in matrix.columns
-                ]
-            else:
-                print("3 figli")
-                parents = matrice.to_numpy().flatten()
-                matrix_cols = ['0', '1', '2']
-                if contatore < 5:
-                    matrix = pd.DataFrame(columns=matrix_cols)
-                    for parent in parents:
-                        matrix.loc[len(matrix)] = [
-                            ScenarioNode(False, parent, returns, cor_matrix, period_date=contatore) for _ in matrix.columns
-                        ]
-                else:
-                    # threads = 6 if contatore < 13 else 4
-                    # print('with threads: ', threads)
-                    # SE NON SI PASSANO PARAMETRI, USERA' TUTTI I CORES, CHE è IL RISULTATO OTTIMALE
-                    with Pool() as po:
-                        mapped = po.map(partial(
-                            # funzione da iterare
-                            self.sibling_nodes,
-                            # parametri opzionali
-                            returns=returns,
-                            cor_matrix=cor_matrix,
-                            optimization_func=None,
-                            matrix_cols=matrix_cols,
-                            date=contatore
-                            # lista di parametri principale
-                        ), parents)
-                    matrix = pd.DataFrame(mapped)
-
-            print(matrix)
-            print(f'example at time: {contatore}')
-            print(matrix.loc[0].head(1).values[0].assets_data)
-            self.generateSonMultithreadedHybrid(matrix, contatore + 1, horizon, returns, cor_matrix)
 
 
 class Nodo:
