@@ -1,0 +1,48 @@
+{
+  "AAPL_NASDAQ_USD": [
+    {
+      "weight": 0,
+      "n_assets": 0
+    }
+  ],
+  "AMZN_NASDAQ_USD": [
+    {
+      "weight": 0,
+      "n_assets": 0
+    }
+  ],
+  "EUE_MTA_EUR": [
+    {
+      "weight": 0,
+      "n_assets": 0
+    }
+  ],
+  "JPM_NYSE_USD": [
+    {
+      "weight": 0,
+      "n_assets": 0
+    }
+  ],
+  "PRY_MTA_EUR": [
+    {
+      "weight": 0,
+      "n_assets": 0
+    }
+  ],
+  "SXRV_XETR_EUR": [
+    {
+      "weight": 0,
+      "n_assets": 0
+    }
+  ],
+  "UNIR_MTA_EUR": [
+    {
+      "weight": 0,
+      "n_assets": 0
+    }
+  ],
+  "cash": {
+    "weight": 1,
+    "n_assets": 100000
+  }
+}
