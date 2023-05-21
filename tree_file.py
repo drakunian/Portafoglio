@@ -6,11 +6,11 @@ import random
 import re
 import timeit
 from cmath import pi, log
-
+from multiprocessing import Pool, freeze_support
 import numpy as np
 import pandas as pd
 import itertools
-
+from functools import partial
 import scipy.stats as stats
 from arch import arch_model
 from dateutil.relativedelta import relativedelta
@@ -50,6 +50,9 @@ def Load_file_json(assets, cash):
 
 
 class NewTree:
+    """
+    class-specific stats are good. measurement are done in 0.11382 seconds. All must be put into effort for root node.
+    """
     def __init__(
             self,
             assets_df: pd.DataFrame,
@@ -68,55 +71,47 @@ class NewTree:
 
         self.returns_data = assets_returns_data
         self.corr_matrix = self.returns_data.corr()  # Constant correlation matrix
-        # .corr() --> is used to find the pairwise correlation of all columns in the. (in pratica crea
-        # una matrice con diagonale principale = 1, nelle parentesi si può aggiungere un metodo di correlazione)
+        print(self.corr_matrix)
         self.assets[['omega', 'alpha[1]', 'gamma[1]', 'beta[1]', 'sigma_t']] = self.compute_egarch_params()  # function
-        self.compute_moments()  # function
-        # self.assets[['omega', 'alpha[1]', 'gamma[1]', 'beta[1]', 'sigma_t']] = self.garch_params
+        self.compute_moments()
+        self.moments_weights = self.compute_moments_weight()
         print('initial assets data: ')
         print(self.assets)
         # print(self.returns_data)
         # End of inputs and starters definition...
         # now, set class parameters of ScenarioNode:
+        self.ret_list = [self.returns_data[column].dropna() for column in self.returns_data.columns]
+
         self.root_node = ScenarioNode(
-            root=True, parent=self.assets.dropna(), returns=self.returns_data, cor_matrix=self.corr_matrix
+            root=True, parent=self.assets.dropna(), returns=self.ret_list, cor_matrix=self.corr_matrix
         )
         print('assets data of root node:')
         print(self.root_node.assets_data)
+        self.periods = []
 
     def compute_egarch_params(self) -> pd.DataFrame:
         eam_params_list = []
-        residuals_df = []
         for column in self.returns_data:
             rets = self.returns_data[column].dropna() * 100
             eam = arch_model(rets, p=1, q=1, o=1, mean='constant', power=2.0, vol='EGARCH', dist='normal')  # --> ??????????
-            # arch_model() --> I modelli ARCH sono una classe popolare di modelli di volatilità che utilizzano valori osservati di rendimenti o residui come shock di volatilità
 
             eam_fit = eam.fit(disp='off')
-            # .fit() --> estimate the arch model
-            eam_params = eam_fit.params  # ritorna A (A = a_i), alfa, beta, gamma, omega
-            last_vol = eam_fit.conditional_volatility.tail(1).values[0]  # make sure is volatility and not variance...
-            # conditional_volatility --> ??
+
+            eam_params = eam_fit.params
+            last_vol = eam_fit.conditional_volatility.tail(1).values[0]
             # now adjust if value is incredibly high:
-            if last_vol > 1000:
-                last_vol = last_vol / 1000
+            # if last_vol > 1000:
+            #     last_vol = last_vol / 1000
             eam_params['sigma_t'] = last_vol / 100  # scaling sigma to decimals
 
-            # residual_list = eam.resids(eam_params['mu'], [rets])  # mu è la versione percentuale di a_i
-            # A residual is the difference between an observed value and a predicted value in a regression model
-            # residuals = pd.DataFrame(residual_list.T, columns=[column], index=rets.index)
-            # print(eam_fit.conditional_volatility[-1])
-            # eam_params['sigma_0'] = eam_fit.conditional_volatility[-1]
             eam_params.name = column
             eam_params_list.append(eam_params)
-            # residuals_df.append(residuals)
 
         df = pd.concat(eam_params_list, axis=1).T
-        # residuals_df = pd.concat(residuals_df, axis=1)
         df.index.name = 'stock_id'
         self.assets['a_i'] = df['mu'] / 100
 
-        return df[['omega', 'alpha[1]', 'gamma[1]', 'beta[1]', 'sigma_t']]  # , residuals_df
+        return df[['omega', 'alpha[1]', 'gamma[1]', 'beta[1]', 'sigma_t']]
 
     def compute_moments(self):
         for i, row in self.assets.dropna().iterrows():
@@ -135,17 +130,165 @@ class NewTree:
         For now, be naive, 1/4 for each weight in moments so you have them directly in formula.
         same for cov factors weight
         """
-        return 0
+        moment_weights = pd.DataFrame(columns=['w1', 'w2', 'w3', 'w4'], index=self.assets.index).fillna(1/4)
+        # for node in nodes:
+        #     for i in assets:
+        #         {"type": "eq", "fun": lambda x: sum(r_i_s * x) + m1_i_plus - m1_i_minus - a_i}
+        #         {"type": "eq", "fun": lambda x: sum(((r_i_s - a_i)**2) * x) + m2_i_plus - m2_i_minus - sigma_2_i}
+        #         {"type": "eq", "fun": lambda x: sum(((r_i_s - a_i)**3) * x) + m3_i_plus - m3_i_minus - moment_3_i}
+        #         {"type": "eq", "fun": lambda x: sum(((r_i_s - a_i)**4) * x) + m4_i_plus - m4_i_minus - moment_4_i}
+        #     # poi, matrice diagonale, per le covarianze:
+        #     # i valori per così come è scritto il codice si duplicano, possiamo calcolare la metà dei constraint, dobbiamo caipre come
+        #     for i in assets:
+        #         for l in assets:
+        #             if i != l:
+        #                 {"type": "eq", "fun": lambda x: sum((r_i_s - a_i)*(r_l_s - a_l) * x) - covariance_i_l}
+        # assets_data = []
+        # for i in assets:
+        #     moment_data_i = []
+        #     for moment in moments_i:
+        #         moment_data_i.append(moment_weight_i * (mk_i_plus + mk_i_minus))
+        #     cov_data_i = []
+        #     for weight_cov in weight_covs_il:
+        #         cov_data_i.append(weight_cov * (cil_plus + cil_minus))
+        # min(sum(assets_data))
+        return moment_weights
+
+    def target_function(self, list_of_probabilities):
+        value = 'stuff computed using other intermediate functions'
+        return value
+
+    def optimization_func(self, dati_del_parent, nodi_fratelli, dati_dell_albero):
+        list_of_probabilities = ['dummy startuop list']
+        optimized = 'executes cplex code on target_function passing list of probabilities as x'
+        return list_of_probabilities
+
+    def sibling_nodes(self, parent, optimization_func: callable = None, matrix_cols=None, date=None) -> list:
+        """
+        qui passiamo come input i dati del parent, come istanza:
+        parent = matrice.iloc[row, col].values[0]
+        poi, procediamo a fare processo 2) [Nodo(False, self.metodo(), matrice.iloc[row, col]) for _ in matrix.columns]
+        calcoliamo poi le probabilità come da processo 3) prob_measure_function (DA CREARE)
+        teriminiamo ritornando la lista aggiornata 4) [completed_sibling_nodes]
+
+        per funzione di ottimizzazione delle probabilità, di seguito si alla uno schema per la definizione dei constraint:
+        {"type": "eq", "fun": lambda x: np.sum(x) - 1},  # sum of probabilities == 1
+        x > LB per ogni nodo, la probabilità deve essere maggiore di un certo livello...
+        for node in nodes:
+            for i in assets:
+                {"type": "eq", "fun": lambda x: sum(r_i_s * x) + m1_i_plus - m1_i_minus - a_i}
+                {"type": "eq", "fun": lambda x: sum(((r_i_s - a_i)**2) * x) + m2_i_plus - m2_i_minus - sigma_2_i}
+                {"type": "eq", "fun": lambda x: sum(((r_i_s - a_i)**3) * x) + m3_i_plus - m3_i_minus - moment_3_i}
+                {"type": "eq", "fun": lambda x: sum(((r_i_s - a_i)**4) * x) + m4_i_plus - m4_i_minus - moment_4_i}
+            # poi, matrice diagonale, per le covarianze:
+            # i valori per così come è scritto il codice si duplicano, possiamo calcolare la metà dei constraint, dobbiamo caipre come
+            for i in assets:
+                for l in assets:
+                    if i != l:
+                        {"type": "eq", "fun": lambda x: sum((r_i_s - a_i)*(r_l_s - a_l) * x) - covariance_i_l}
+        dove sigma_2_i, covariance_i_l e i momenti sono presi, rispettivamente:
+            forecast nodo parent
+            albero (definiti costanti)
+            albero (definiti costanti)
+            forecast nodo parent
+
+        dove la funzione obiettivo sarà:
+        assets_data = []
+        for i in assets:
+            moment_data_i = []
+            for moment in moments_i:
+                moment_data_i.append(moment_weight_i * (mk_i_plus + mk_i_minus))
+            cov_data_i = []
+            for weight_cov in weight_covs_il:
+                cov_data_i.append(weight_cov * (cil_plus + cil_minus))
+            moment_sum_i = sum(moment_data)
+            cov_sum_i = sum(cov_data_i)
+            assets_data.append(moment_sum_i + cov_sum_i)
+        min(sum(assets_data))
+
+        dove, i pesi per ciascun moemnto e per ciascun fattore di covarianza sono definiti,
+        per ogni asset, all'inizializzazione dell'albero.
+        Serve un modo per connettere failmente ed efficientemente questi valori ai valori dei momenti stessi
+        di ciascun asset...
+
+        Per la prossima settimana, dobbiamo aver finito di lavorare a questa parte ed averla integrata definitivamente
+        """
+        """
+        1 -> parent
+        2 -> nodi_fratelli= [Nodo(False, self.metodo(), parent) for _ in matrix_cols]
+        3 -> optimization_func(dati_del_parent, nodi_fratelli, dati_dell'albero) -> [lista nodi aggiornati]
+        per la funzione di ottimizzazione, i valori mk_i sono funzioni delle probabilità. variano al variare delle 
+        probabilità, dato appunto dal constraint.
+        sarebbe utile scrivere una serie di funzio ni del tipo:
+        self.match_mean(x) - a_i, dove x è la lista di probabilità e la funzione somiglia a:
+        sum(r_i_s * x) + m1_i_plus - m1_i_minus, ma mk_p e mk_m come li gestiamo?
+
+        mk è impiegato nel calcolo delle deviazioni di cosa? ebbene,
+        il set di probabilità è unico, per tutti i constraint, dunque, esisterà una deviazione tra:
+        sum(val_s*prob_s) e exp_val, per ogni val. le deviazioni sono quindi il risultato delle probabilità formulate, 
+        tali per cui, desideriamo che la sommatoria di tutte le deviazioni dai valori teorici sia minimizzata.
+        la funzione obiettivo prende probabilità e ritorna gli obiettivi. la funzione dunque ha una fase intermedia di 
+        output delle deviazioni e poi le somma nella effettiva funzione obiettivo...
+        Puoi strutturare in questo modo:
+        ogni asset prende le probabilità, procede ad outputtare le proprie deviazioni fornendole all'effettiva funzione
+        obiettivo...
+        """
+        return [ScenarioNode(False, parent, self.ret_list, self.corr_matrix, period_date=date) for _ in matrix_cols]
+
+    def generate_tree(self, init_matrix):
+        """
+        PER ORA, GENERARE 8 PERIODI IN QUESTO MODO RICHIEDE: 5.0 minuti e 37 secondi UTILIZZANDO TUTTI I CORES.
+        NON MALE, MA PER GENERARNE 12 DIVENTA ABBASTANZA LENTO.
+        COME RISOLVERE? CI SONO MOMENTI IN CUI LA CPU NON E' USATA AL 100%. DOBBIAMO IDENTIFICARE COSA VIENE FATTO IN
+        QUEI MOMENTI E FAR SI CHE VENGA USATA APPIENO ANCHE LI
+        """
+        init_matrix = init_matrix
+        counter = 0
+        while counter <= self.horizon:
+            print(init_matrix.size)
+            print('contatore: ', counter)
+            if init_matrix.size == 1:
+                row, col = 0, 0
+                print("10 figli")
+                matrix = pd.DataFrame(columns=['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'])
+                matrix.loc[len(matrix)] = self.sibling_nodes(
+                    init_matrix.iloc[row, col], optimization_func=None, matrix_cols=matrix.columns, date=counter
+                )
+            else:
+                print("3 figli")
+                parents = init_matrix.to_numpy().flatten()
+                matrix_cols = ['0', '1', '2']
+                if counter < 5:
+                    matrix = pd.DataFrame(columns=matrix_cols)
+                    for parent in parents:
+                        matrix.loc[len(matrix)] = self.sibling_nodes(
+                            parent, optimization_func=None, matrix_cols=matrix_cols, date=counter
+                        )
+                else:
+                    with Pool() as po:
+                        mapped = po.map(partial(
+                            self.sibling_nodes,
+                            optimization_func=None,
+                            matrix_cols=matrix_cols,
+                            date=counter
+                        ), parents)
+                    matrix = pd.DataFrame(mapped)
+
+            init_matrix = matrix  # hide it if return to old way...
+            print(matrix)
+            print(f'example at time: {counter}')
+            print(matrix.loc[0].head(1).values[0].assets_data)
+            self.periods.append(counter)
+            counter += 1
 
     def test_node(self):
         init_matrix = pd.DataFrame({self.root_node})
-        print(init_matrix)
-        counter = 0
-        self.root_node.generateSonMultithreadedHybrid(
-            init_matrix, counter, self.horizon, self.returns_data, self.corr_matrix
-        )
+        # save initial matrix somewhere like a parquet file, just make sure that it saves entire instances in the cells
+        self.generate_tree(init_matrix)
+        print(self.periods)
 
 # %%
+
 
 def main(): #variabili prese da input
     '''horizon = 24  # default
