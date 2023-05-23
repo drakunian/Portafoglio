@@ -31,17 +31,15 @@ class ScenarioNode:
     def __init__(
             self, root: bool, parent, returns: pd.DataFrame, cor_matrix: pd.DataFrame, period_date=None
     ):
-        self.periods = []
-
         self.root = root
+
         self.date = period_date  # to be used for index of new row of returns
-        self.parent = None
-        self.assets_data = None
-        self.init_values(parent)  # modifies data of above parameters
+        # self.parent = None  NON SERVE!
+        self.assets_data = self.pass_asset_data(parent)  # modifies data of above parameters
 
         self.compute_returns(returns)
         # probabilities measurement inputs:
-        self.conditional_variances = self.compute_variances()  # diagonal matrix of conditional variances
+        self.conditional_volatilities = self.compute_variances()  # diagonal matrix of conditional variances
         self.conditional_covariances = self.compute_covariances(cor_matrix=cor_matrix)  # covariance matrix
 
         self.parent_probability = parent.probability if root is False else None
@@ -68,12 +66,14 @@ class ScenarioNode:
     def __repr__(self):
         return f"node_n_from_period_{self.date}"
 
-    def init_values(self, parent):
+    def pass_asset_data(self, parent):
         if self.root is False:
-            self.parent = parent
-            self.assets_data = parent.assets_data
+            # self.parent = parent
+            # parent may be an id in the future...
+            return parent.assets_data
         else:
-            self.assets_data = parent
+            # instead of none, may generate an id in the future...
+            return parent
 
     def compute_returns(self, returns: pd.DataFrame):
         """
@@ -81,44 +81,44 @@ class ScenarioNode:
         """
         # delegate dropna and columns iteration to init in tree
         sampled = [ret.sample().reset_index(drop=True) for ret in returns]
-        self.assets_data['returns_t'] = 1 + pd.concat(sampled, axis=1).T
-        self.assets_data['close_prices_t'] = self.assets_data['close_prices_t'] * self.assets_data['returns_t']
+        self.assets_data['returns_t'] = pd.concat(sampled, axis=1).T
+        self.assets_data['close_prices_t'] = self.assets_data['close_prices_t'] * (1 + self.assets_data['returns_t'])
+        self.assets_data['residuals'] = self.assets_data['returns_t'] - self.assets_data['a_i']
         # now, check on prices, if they are absurd, we need to replace them i think...
 
-    def compute_residuals(self) -> pd.DataFrame:
-        residuals = (self.assets_data['returns_t'] - 1 - self.assets_data['a_i']) * 100
-        return residuals.T
-
     def compute_variances(self) -> pd.DataFrame:
+        """
+        inf sigma_t still existing in some nodes. Adjust that!
+        """
         if self.root is False:
-            # IF YOU SOLVE THE EGARCH PROBLEM, YOU CAN SUBSTITUTE HERE WITH THE EGARCH FORMULA FROM ARCH!
-            # WOULD BE NICE TO REDUCE NUMBER OF PASSAGES, IF IT DIDN'T RESULT IN ABSURD VALUES...
             dummy = self.assets_data
             # here lies the problem with shortening code...
+            dummy['residuals'] = self.assets_data['residuals'] * 100
             dummy['sigma_t'] = self.assets_data['sigma_t'] * 100
-            dummy['e_val'] = self.compute_residuals() / dummy['sigma_t']
-            # self.assets_data['sigma_t'] = dummy[['e_i', 'omega', 'alpha[1]', 'gamma[1]', 'beta[1]', 'sigma_t']].apply(
-            #     # WIP!!! ON THAT FUNCTION, SPEED IT UP IN ITS CALCULATIONS...
-            #     lambda x: egarch_formula(x[0], x[1], x[2], x[3], x[4], x[5]), axis=1
-            # )
-            dummy['term_1'] = dummy['alpha[1]'] * (abs(dummy['e_val']) - np.sqrt(2/pi))
-            dummy['term_2'] = dummy['gamma[1]'] * dummy['e_val']
-            dummy['term_3'] = dummy['beta[1]'] * np.log(dummy['sigma_t']**2)
-
-            dummy['log_sigma_2'] = dummy['omega'] + dummy['term_1'] + dummy['term_2'] + dummy['term_3']
+            dummy['e_val'] = dummy['residuals'] / dummy['sigma_t']
+            # dummy['term_1'] = dummy['alpha[1]'] * (abs(dummy['e_val']) - np.sqrt(2/pi))
+            # dummy['term_2'] = dummy['gamma[1]'] * dummy['e_val']
+            # dummy['term_3'] = dummy['beta[1]'] * np.log(dummy['sigma_t']**2)
+            # dummy['log_sigma_2'] = dummy['omega'] + dummy['term_1'] + dummy['term_2'] + dummy['term_3']
+            dummy['log_sigma_2'] = dummy['omega'] + dummy['alpha[1]']*(abs(dummy['e_val'])-np.sqrt(2/pi)) + \
+                                   dummy['gamma[1]']*dummy['e_val'] + dummy['beta[1]']*np.log(dummy['sigma_t']**2)
 
             self.assets_data['sigma_t'] = np.sqrt(e**dummy['log_sigma_2']) / 100
             # WIP!!! THIS IS THE ULTIMATE PROBLEM TO SOLVE! really a dirty solution for now...
-            self.assets_data.loc[self.assets_data['sigma_t'] < 0.00001, 'sigma_t'] = 0.00001
-            self.assets_data = self.assets_data.drop(['e_val', 'term_1', 'term_2', 'term_3', 'log_sigma_2'], axis=1)
+            self.assets_data.loc[self.assets_data['sigma_t'] < 0.00001, 'sigma_t'] = 0.00001  # CHANGE THAT!
+            self.assets_data.loc[self.assets_data['sigma_t'] > 1.5, 'sigma_t'] = 0.01  # CHANGE THAT!
+            self.assets_data = self.assets_data.drop(['e_val', 'log_sigma_2'], axis=1)  # 'term_1', 'term_2', 'term_3'
+            self.assets_data['residuals'] = self.assets_data['residuals'] / 100
         return pd.DataFrame(
-            np.diag(self.assets_data['sigma_t']**2), index=self.assets_data.index, columns=self.assets_data.index
+            np.diag(self.assets_data['sigma_t']), index=self.assets_data.index, columns=self.assets_data.index
         )
 
     def compute_covariances(self, cor_matrix: pd.DataFrame) -> pd.DataFrame:
-        sqrt_variances = np.sqrt(self.conditional_variances)
-        cov_matrix = np.dot(sqrt_variances, np.dot(cor_matrix, sqrt_variances))
-        return pd.DataFrame(cov_matrix, index=self.assets_data.index, columns=self.assets_data.index)
+        # sqrt_variances = np.sqrt(self.conditional_variances)
+        cov_matrix = np.dot(self.conditional_volatilities, np.dot(cor_matrix, self.conditional_volatilities))
+        cov_matrix = pd.DataFrame(cov_matrix, index=self.assets_data.index, columns=self.assets_data.index)
+        cov_matrix = cov_matrix.where(np.triu(np.ones(cov_matrix.shape)).astype(np.bool_)).stack().reset_index()
+        return cov_matrix.loc[cov_matrix['level_0'] != cov_matrix['level_1']]  # .set_index(['level_0', 'level_1'])
 
 
 class Nodo:

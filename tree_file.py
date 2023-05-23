@@ -64,6 +64,8 @@ class NewTree:
     ):  # sono variabili prese da input
         self.assets = assets_df
         self.assets.loc['cash', 'currency'] = cash_currency
+        self.cash_data = self.assets.loc['cash']
+        self.assets = self.assets.dropna()
 
         self.period = period
         self.horizon = horizon  # Number of time periods (e.g. 12 months)
@@ -77,13 +79,10 @@ class NewTree:
         self.moments_weights = self.compute_moments_weight()
         print('initial assets data: ')
         print(self.assets)
-        # print(self.returns_data)
-        # End of inputs and starters definition...
         # now, set class parameters of ScenarioNode:
         self.ret_list = [self.returns_data[column].dropna() for column in self.returns_data.columns]
-
         self.root_node = ScenarioNode(
-            root=True, parent=self.assets.dropna(), returns=self.ret_list, cor_matrix=self.corr_matrix
+            root=True, parent=self.assets, returns=self.ret_list, cor_matrix=self.corr_matrix
         )
         print('assets data of root node:')
         print(self.root_node.assets_data)
@@ -94,9 +93,7 @@ class NewTree:
         for column in self.returns_data:
             rets = self.returns_data[column].dropna() * 100
             eam = arch_model(rets, p=1, q=1, o=1, mean='constant', power=2.0, vol='EGARCH', dist='normal')  # --> ??????????
-
             eam_fit = eam.fit(disp='off')
-
             eam_params = eam_fit.params
             last_vol = eam_fit.conditional_volatility.tail(1).values[0]
             # now adjust if value is incredibly high:
@@ -123,9 +120,9 @@ class NewTree:
             )  # kurtosis
             # .loc --> used to access a group of rows and columns by label(s) or a boolean array
 
-    def compute_moments_weight(self):
+    def compute_moments_weight(self) -> pd.DataFrame:
         """
-        using principal component analysis (PCA), gets the weights for each moment deviation, same for covariances.
+        using principal component analysis (PCA), gets weights for each moment deviation, same for covariances.
 
         For now, be naive, 1/4 for each weight in moments so you have them directly in formula.
         same for cov factors weight
@@ -154,13 +151,82 @@ class NewTree:
         # min(sum(assets_data))
         return moment_weights
 
-    def target_function(self, list_of_probabilities):
-        value = 'stuff computed using other intermediate functions'
-        return value
+    @staticmethod
+    def map_covariance_deviations(probability, node):
+        deviations = pd.DataFrame(columns=['first_term'])
+        # for each stuff unique:
+        # velocizza questo for loop
+        for i, row in node.conditional_covariances.iterrows():
+            l0 = node.conditional_covariances.loc[i, 'level_0']
+            l1 = node.conditional_covariances.loc[i, 'level_1']
+            deviations.loc[i, 'first_term'] = node.assets_data.loc[l0, 'residuals'] * node.assets_data.loc[l1, 'residuals'] * probability
+        return deviations
 
-    def optimization_func(self, dati_del_parent, nodi_fratelli, dati_dell_albero):
-        list_of_probabilities = ['dummy startuop list']
-        optimized = 'executes cplex code on target_function passing list of probabilities as x'
+    def compute_deviations(self, list_of_probabilities, parent, sibling_nodes=[]) -> pd.DataFrame:
+        """
+        usa questa funzione per generare le deviazioni, che fanno parte della funzione obiettivo. La quale a sua volta
+        sarà passata a optimization_func dove verrà eseguito il codice cplex. Alla fine, i constraint per il problema
+        cplex sono i seguenti:
+            posto -> x = [probabilità_nodo_s]
+            sum(x) == 1
+            x > LB per ogni x.
+            LB si definisce come segue:
+                LB = sensibility * 1 / len(x)
+                dove -> sensibility == 1 per ora, ma potrà essere modificata in futuro
+
+        SU QUESTA FUNZIONE CI LAVORERO' IO, ASSICURANDOMI DI FARTI AVERE EFFICIENTEMENTE I DATI DELLE DEVIAZIONI PER IL
+        CALCOLO DELLA FUNZIONE OBIETTIVO
+        """
+        # print([node.assets_data for node in sibling_nodes])
+        i = 0
+        first_term_1 = []
+        first_term_2 = []
+        first_term_3 = []
+        first_term_4 = []
+        cov_dev_matrix = []
+        for x in list_of_probabilities:
+            used_node = sibling_nodes[i]
+            # used_node.assets_data['returns_t'] = used_node.assets_data['returns_t'] - 1
+            first_term_1.append(used_node.assets_data['returns_t'] * x)
+            first_term_2.append(((used_node.assets_data['residuals'])**2)*x)
+            first_term_3.append(((used_node.assets_data['residuals'])**3)*x)
+            first_term_4.append(((used_node.assets_data['residuals'])**4)*x)
+            # add deviations for the covariances!
+            cov_dev_matrix.append(
+                # make function that computes the values, indexing by level_0 and level_1
+                self.map_covariance_deviations(x, used_node)
+            )
+            i += 1
+        deviation1 = pd.concat(first_term_1, axis=1).sum(axis=1) - self.assets['a_i']
+        deviation2 = pd.concat(first_term_2, axis=1).sum(axis=1) - parent.assets_data['sigma_t']**2
+        deviation3 = pd.concat(first_term_3, axis=1).sum(axis=1) - self.assets['third_moment']
+        deviation4 = pd.concat(first_term_4, axis=1).sum(axis=1) - self.assets['fourth_moment']
+        # rename columns, or maybe not... columns=['first', 'second', 'third', 'fourth']
+        deviations = pd.concat([deviation1, deviation2, deviation3, deviation4], axis=1)
+        cov_dev_df = pd.concat(cov_dev_matrix, axis=1).sum(axis=1) - parent.conditional_covariances[0]
+        # then compute cov_deviations and return a full dataframe
+        return abs(deviations), abs(cov_dev_df)
+
+    def target_function(self, list_of_probabilities, parent, sibling_nodes=[]):
+        """
+        la funzione precedente calcola le deviazioi, qui, hai la funzione obiettivo, che sommatutte le deviazioni pesate
+        di ciascun asset.
+        """
+        deviations_dataframe, cov_deviations_dataframe = self.compute_deviations(
+            list_of_probabilities, parent=parent, sibling_nodes=sibling_nodes
+        )
+        # print(self.moments_weights)
+        # moltiplica dev_df con dev_weights_df e successivamente somma tutte le righe e colonne ottenendo un unico
+        # moments_value = deviations_dataframe.sum().sum()
+        # cov_value = cov_deviations_dataframe.sum()
+        return deviations_dataframe.sum().sum() + cov_deviations_dataframe.sum()
+
+    def optimization_func(self, parent, sibling_nodes: list):
+        n = len(sibling_nodes)
+        list_of_probabilities = [1/n for _ in sibling_nodes]  # 'dummy startup list'
+        # you will pass self.target_func in cplex script:
+        val = self.target_function(list_of_probabilities, parent=parent, sibling_nodes=sibling_nodes)
+        # optimized = 'executes cplex code on target_function passing list of probabilities as x'
         return list_of_probabilities
 
     def sibling_nodes(self, parent, optimization_func: callable = None, matrix_cols=None, date=None) -> list:
@@ -233,14 +299,24 @@ class NewTree:
         ogni asset prende le probabilità, procede ad outputtare le proprie deviazioni fornendole all'effettiva funzione
         obiettivo...
         """
-        return [ScenarioNode(False, parent, self.ret_list, self.corr_matrix, period_date=date) for _ in matrix_cols]
+        # vediamo di velocizzare questo for loop
+        sibling_nodes = [
+            ScenarioNode(False, parent, self.ret_list, self.corr_matrix, period_date=date) for _ in matrix_cols
+        ]
+        prob_list = optimization_func(parent, sibling_nodes)
+        i = 0
+        for node in sibling_nodes:
+            node.probability = prob_list[i]
+            i += 1
+        return sibling_nodes
 
     def generate_tree(self, init_matrix):
         """
-        PER ORA, GENERARE 8 PERIODI IN QUESTO MODO RICHIEDE: 5.0 minuti e 37 secondi UTILIZZANDO TUTTI I CORES.
-        NON MALE, MA PER GENERARNE 12 DIVENTA ABBASTANZA LENTO.
-        COME RISOLVERE? CI SONO MOMENTI IN CUI LA CPU NON E' USATA AL 100%. DOBBIAMO IDENTIFICARE COSA VIENE FATTO IN
-        QUEI MOMENTI E FAR SI CHE VENGA USATA APPIENO ANCHE LI
+        PER ORA, GENERARE 8 PERIODI IN QUESTO MODO RICHIEDE: 2.0 minuti e 37 secondi UTILIZZANDO TUTTI I CORES.
+        IL MASSIMO PRIMA DEL CRASH CON 16 GB RAM E': 9 nodi, in 7 minuti
+
+        CI SONO MOMENTI IN CUI LA CPU NON E' USATA AL 100%. DOBBIAMO IDENTIFICARE COSA VIENE FATTO IN QUEI MOMENTI E FAR
+        SI CHE VENGA USATA APPIENO ANCHE LI
         """
         init_matrix = init_matrix
         counter = 0
@@ -249,10 +325,11 @@ class NewTree:
             print('contatore: ', counter)
             if init_matrix.size == 1:
                 row, col = 0, 0
+                root = init_matrix.iloc[row, col]
                 print("10 figli")
                 matrix = pd.DataFrame(columns=['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'])
                 matrix.loc[len(matrix)] = self.sibling_nodes(
-                    init_matrix.iloc[row, col], optimization_func=None, matrix_cols=matrix.columns, date=counter
+                    root, optimization_func=self.optimization_func, matrix_cols=matrix.columns, date=counter
                 )
             else:
                 print("3 figli")
@@ -262,22 +339,23 @@ class NewTree:
                     matrix = pd.DataFrame(columns=matrix_cols)
                     for parent in parents:
                         matrix.loc[len(matrix)] = self.sibling_nodes(
-                            parent, optimization_func=None, matrix_cols=matrix_cols, date=counter
+                            parent, optimization_func=self.optimization_func, matrix_cols=matrix_cols, date=counter
                         )
                 else:
                     with Pool() as po:
                         mapped = po.map(partial(
                             self.sibling_nodes,
-                            optimization_func=None,
+                            optimization_func=self.optimization_func,
                             matrix_cols=matrix_cols,
                             date=counter
                         ), parents)
                     matrix = pd.DataFrame(mapped)
 
             init_matrix = matrix  # hide it if return to old way...
-            print(matrix)
+            # print(matrix.info())
             print(f'example at time: {counter}')
             print(matrix.loc[0].head(1).values[0].assets_data)
+            # print(matrix.loc[0].head(1).values[0].probability)
             self.periods.append(counter)
             counter += 1
 
