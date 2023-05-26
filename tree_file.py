@@ -500,7 +500,7 @@ if __name__ == "__main__":
     #print(assets_df)
     portfolio = pd.DataFrame(ast_json).T  # a sto punto, json file prende anche currency (?)
     assets_df = pd.concat([assets_df[['stock_id', 'currency']].set_index('stock_id'), portfolio], axis=1)
-    current_assets_prices = pd.read_parquet('curr_assets_prices.parquet').set_index('symbol')
+    current_assets_prices = pd.read_parquet('curr_assets_prices.parquet').set_index('stock_id')
     assets_df['close_prices_t'] = current_assets_prices['close'].astype('float64')
 
     ast_ret = pd.read_parquet('asset_returns.parquet')
