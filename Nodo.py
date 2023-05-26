@@ -1,6 +1,7 @@
-
+from functools import partial
 # import pyarrow
-from math import e
+from math import e, log
+from multiprocessing import Pool
 
 import numpy as np
 import pandas as pd

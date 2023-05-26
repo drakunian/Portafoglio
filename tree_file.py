@@ -7,8 +7,11 @@ import re
 import timeit
 from cmath import pi, log
 from multiprocessing import Pool, freeze_support
+
+import cplex
 import numpy as np
 import pandas as pd
+from docplex.mp.model import Model
 import itertools
 from functools import partial
 import scipy.stats as stats
@@ -18,7 +21,7 @@ from dateutil.relativedelta import relativedelta
 
 # import pyarrow.parquet as pq
 
-from Nodo import Nodo, ScenarioNode, egarch_formula
+from Nodo import ScenarioNode, egarch_formula
 from dbconn_copy import DBConnection, DBOperations
 
 # from dbconn_copy import DBConnection, DBOperations
@@ -237,11 +240,29 @@ class NewTree:
             Il tutto per ora è stato strutturato come se cplex prenda una funzione come parametro, ma va verificato ed
             in caso andranno fuse le varie parti del poblema di ottimizzazione dentro questa funzione
         """
+
         n = len(sibling_nodes)
         list_of_probabilities = [1 / n for _ in sibling_nodes]  # 'dummy startup list'
         # you will pass self.target_func in cplex script:
-        val = self.target_function(list_of_probabilities, parent=parent, sibling_nodes=sibling_nodes)
+        #val = self.target_function(list_of_probabilities, parent=parent, sibling_nodes=sibling_nodes)
         # optimized = 'executes cplex code on target_function passing list of probabilities as x'
+
+        #list_of_probabilities = pd.Series(list_of_probabilities)
+        N = len(list_of_probabilities)
+        sensibility = 0.99
+        LB = sensibility * 1 / len(list_of_probabilities)
+
+        m = Model("Optimization function")
+        m.add(list_of_probabilities, (list_of_probabilities[i]>=LB for i in range(N)))
+
+        m.add_constraint(sum(list_of_probabilities[i] for i in range(N)) == 1)
+        m.add_constraint(list_of_probabilities[i] >= LB for i in range(N))
+        m.set_objective("min", self.target_function(list_of_probabilities, parent=parent, sibling_nodes=sibling_nodes))
+
+        #m.print_information()
+        sol = m.solve()
+        print(sol)
+
         return list_of_probabilities
 
     def sibling_nodes(self, parent, optimization_func: callable = None, matrix_cols=None, date=None) -> list:
@@ -476,13 +497,15 @@ if __name__ == "__main__":
 
     ast_json = json.loads(open('assets.json', 'r').read())
     assets_df = pd.read_parquet('assets_df.parquet')
-    print(assets_df)
+    #print(assets_df)
     portfolio = pd.DataFrame(ast_json).T  # a sto punto, json file prende anche currency (?)
     assets_df = pd.concat([assets_df[['stock_id', 'currency']].set_index('stock_id'), portfolio], axis=1)
-    current_assets_prices = pd.read_parquet('curr_assets_prices.parquet').set_index('stock_id')
+    current_assets_prices = pd.read_parquet('curr_assets_prices.parquet').set_index('symbol')
     assets_df['close_prices_t'] = current_assets_prices['close'].astype('float64')
 
-    ast_ret = pd.read_parquet('assets_returns.parquet').set_index('datetime')
+    ast_ret = pd.read_parquet('asset_returns.parquet')
+    print(ast_ret)
+    #ast_ret.set_index(['datetime'])
 
     tree = NewTree(
         assets_df, ast_ret, horizon=8
