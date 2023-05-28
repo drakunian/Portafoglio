@@ -242,24 +242,16 @@ class NewTree:
         """
 
         n = len(sibling_nodes)
-        list_of_probabilities = [1 / n for _ in sibling_nodes]  # 'dummy startup list'
-        # you will pass self.target_func in cplex script:
-        #val = self.target_function(list_of_probabilities, parent=parent, sibling_nodes=sibling_nodes)
-        # optimized = 'executes cplex code on target_function passing list of probabilities as x'
 
-        #list_of_probabilities = pd.Series(list_of_probabilities)
-        N = len(list_of_probabilities)
         sensibility = 0.99
-        LB = sensibility * 1 / len(list_of_probabilities)
+        LB = sensibility / n
 
         m = Model("Optimization function")
-        m.add(list_of_probabilities, (list_of_probabilities[i]>=LB for i in range(N)))
-
-        m.add_constraint(sum(list_of_probabilities[i] for i in range(N)) == 1)
-        m.add_constraint(list_of_probabilities[i] >= LB for i in range(N))
+        list_of_probabilities = m.continuous_var_list(n, LB, 1.0)
+        print(list_of_probabilities)
+        m.add_constraint(sum(list_of_probabilities) == 1)
         m.set_objective("min", self.target_function(list_of_probabilities, parent=parent, sibling_nodes=sibling_nodes))
-
-        #m.print_information()
+        m.print_information()
         sol = m.solve()
         print(sol)
 
