@@ -30,7 +30,7 @@ class ScenarioNode:
     The node by itself generates an executes all its methods in around 0.007422 seconds. So, how we can improve the
     tree generation? Is all in the optimal employment of RAM and Threads/processes at this point"""
     def __init__(
-            self, root: bool, parent, returns: pd.DataFrame, cor_matrix: pd.DataFrame, period_date=None
+            self, root: bool, parent, returns: [pd.DataFrame], cor_matrix: pd.DataFrame, period_date=None
     ):
         self.root = root
 

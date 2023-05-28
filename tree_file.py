@@ -175,7 +175,7 @@ class NewTree:
             x > LB per ogni x.
             LB si definisce come segue:
                 LB = sensibility * 1 / len(x)
-                dove -> sensibility == 1 per ora, ma potrà essere modificata in futuro
+                dove -> sensibility == .99 per ora, ma potrà essere modificata in futuro
 
         SU QUESTA FUNZIONE CI LAVORERO' IO, ASSICURANDOMI DI FARTI AVERE EFFICIENTEMENTE I DATI DELLE DEVIAZIONI PER IL
         CALCOLO DELLA FUNZIONE OBIETTIVO
