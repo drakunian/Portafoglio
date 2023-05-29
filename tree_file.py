@@ -56,6 +56,7 @@ class NewTree:
     """
     class-specific stats are good. measurement are done in 0.11382 seconds. All must be put into effort for root node.
     """
+
     def __init__(
             self,
             assets_df: pd.DataFrame,
@@ -80,22 +81,18 @@ class NewTree:
         self.assets[['omega', 'alpha[1]', 'gamma[1]', 'beta[1]', 'sigma_t']] = self.compute_egarch_params()  # function
         self.compute_moments()
         self.moments_weights = self.compute_moments_weight()
+        self.ret_list = [self.returns_data[column].dropna() for column in self.returns_data.columns]
         print('initial assets data: ')
         print(self.assets)
         # now, set class parameters of ScenarioNode:
-        self.ret_list = [self.returns_data[column].dropna() for column in self.returns_data.columns]
-        self.root_node = ScenarioNode(
-            root=True, parent=self.assets, returns=self.ret_list, cor_matrix=self.corr_matrix
-        )
-        print('assets data of root node:')
-        print(self.root_node.assets_data)
-        self.tree = []  # read parquet of all periods
+        self.tree = [pd.read_parquet(f'period_{x}') for x in range(horizon + 1)]  # read parquet of all periods
 
     def compute_egarch_params(self) -> pd.DataFrame:
         eam_params_list = []
         for column in self.returns_data:
             rets = self.returns_data[column].dropna() * 100
-            eam = arch_model(rets, p=1, q=1, o=1, mean='constant', power=2.0, vol='EGARCH', dist='normal')  # --> ??????????
+            eam = arch_model(rets, p=1, q=1, o=1, mean='constant', power=2.0, vol='EGARCH',
+                             dist='normal')  # --> ??????????
             eam_fit = eam.fit(disp='off')
             eam_params = eam_fit.params
             last_vol = eam_fit.conditional_volatility.tail(1).values[0]
@@ -130,7 +127,7 @@ class NewTree:
         For now, be naive, 1/4 for each weight in moments so you have them directly in formula.
         same for cov factors weight
         """
-        moment_weights = pd.DataFrame(columns=['w1', 'w2', 'w3', 'w4'], index=self.assets.index).fillna(1/4)
+        moment_weights = pd.DataFrame(columns=['w1', 'w2', 'w3', 'w4'], index=self.assets.index).fillna(1 / 4)
         return moment_weights
 
     @staticmethod
@@ -141,7 +138,8 @@ class NewTree:
         for i, row in node.conditional_covariances.iterrows():
             l0 = node.conditional_covariances.loc[i, 'level_0']
             l1 = node.conditional_covariances.loc[i, 'level_1']
-            deviations.loc[i, 'first_term'] = node.assets_data.loc[l0, 'residuals'] * node.assets_data.loc[l1, 'residuals'] * probability
+            deviations.loc[i, 'first_term'] = node.assets_data.loc[l0, 'residuals'] * node.assets_data.loc[
+                l1, 'residuals'] * probability
         return deviations
 
     def compute_deviations(self, list_of_probabilities, parent, sibling_nodes=[]) -> pd.DataFrame:
@@ -164,9 +162,9 @@ class NewTree:
             used_node = sibling_nodes[i]
             #                                    initial[i] * final[i] for
             first_term_1.append(used_node.assets_data['returns_t'] * x)
-            first_term_2.append(((used_node.assets_data['residuals'])**2)*x)
-            first_term_3.append(((used_node.assets_data['residuals'])**3)*x)
-            first_term_4.append(((used_node.assets_data['residuals'])**4)*x)
+            first_term_2.append(((used_node.assets_data['residuals']) ** 2) * x)
+            first_term_3.append(((used_node.assets_data['residuals']) ** 3) * x)
+            first_term_4.append(((used_node.assets_data['residuals']) ** 4) * x)
             # add deviations for the covariances!
             cov_dev_matrix.append(
                 # make function that computes the values, indexing by level_0 and level_1
@@ -176,7 +174,7 @@ class NewTree:
 
         deviations = pd.concat([
             pd.concat(first_term_1, axis=1).sum(axis=1) - self.assets['a_i'],
-            pd.concat(first_term_2, axis=1).sum(axis=1) - parent.assets_data['sigma_t']**2,
+            pd.concat(first_term_2, axis=1).sum(axis=1) - parent.assets_data['sigma_t'] ** 2,
             pd.concat(first_term_3, axis=1).sum(axis=1) - self.assets['third_moment'],
             pd.concat(first_term_4, axis=1).sum(axis=1) - self.assets['fourth_moment']
         ], axis=1)
@@ -217,17 +215,24 @@ class NewTree:
         n = len(sibling_nodes)
         list_of_probabilities = [1 / n for _ in sibling_nodes]  # 'dummy startup list'
         # if x is Continuous
+        val = self.target_function(list_of_probabilities, parent, sibling_nodes)
         sensibility = 0.5
         LB = sensibility / n
 
-        m = Model("Optimization function")
-        list_of_probabilities = m.continuous_var_list(n, LB, 1.0)
-        print(list_of_probabilities)
-        m.add_constraint(sum(list_of_probabilities) == 1)
-        m.set_objective("min", self.target_function(list_of_probabilities, parent=parent, sibling_nodes=sibling_nodes))
-        m.print_information()
-        sol = m.solve()
-        print(sol)
+        # m = Model("Optimization function")
+        # list_of_probabilities = m.continuous_var_list(n, LB, 1.0)
+        # print(list_of_probabilities)
+        # m.add_constraint(sum(list_of_probabilities) == 1)
+        # m.set_objective("min", self.target_function(list_of_probabilities, parent=parent, sibling_nodes=sibling_nodes))
+        # m.print_information()
+        # sol = m.solve()
+        # print(sol)
+        # constraints = ({"type": "eq", "fun": lambda x: sum(x) - 1})
+        # bounds = tuple((LB, 1) for _ in range(n))
+        # obj = sco.minimize(
+        #     self.target_function, np.array(list_of_probabilities),
+        #     args=(parent, sibling_nodes), method="SLSQP", bounds=bounds, constraints=constraints
+        # )
         return list_of_probabilities  # obj.x
 
     def sibling_nodes(self, parent, optimization_func: callable = None, matrix_cols=None, date=None) -> list:
@@ -307,9 +312,18 @@ class NewTree:
             counter += 1
 
     def test_node(self):
-        init_matrix = pd.DataFrame({self.root_node})
+        root_node = ScenarioNode(
+            root=True, parent=self.assets, returns=self.ret_list, cor_matrix=self.corr_matrix
+        )
+        print('assets data of root node:')
+        print(root_node.assets_data)
+        init_matrix = pd.DataFrame({root_node})
         # save initial matrix somewhere like a parquet file, just make sure that it saves entire instances in the cells
         self.generate_tree(init_matrix)
+
+    def clear(self):
+        # deletes the tree parquet files
+        pass
 
 # %%
 
