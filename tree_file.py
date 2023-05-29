@@ -89,7 +89,7 @@ class NewTree:
         )
         print('assets data of root node:')
         print(self.root_node.assets_data)
-        self.periods = []
+        self.tree = []  # read parquet of all periods
 
     def compute_egarch_params(self) -> pd.DataFrame:
         eam_params_list = []
@@ -131,27 +131,6 @@ class NewTree:
         same for cov factors weight
         """
         moment_weights = pd.DataFrame(columns=['w1', 'w2', 'w3', 'w4'], index=self.assets.index).fillna(1/4)
-        # for node in nodes:
-        #     for i in assets:
-        #         {"type": "eq", "fun": lambda x: sum(r_i_s * x) + m1_i_plus - m1_i_minus - a_i}
-        #         {"type": "eq", "fun": lambda x: sum(((r_i_s - a_i)**2) * x) + m2_i_plus - m2_i_minus - sigma_2_i}
-        #         {"type": "eq", "fun": lambda x: sum(((r_i_s - a_i)**3) * x) + m3_i_plus - m3_i_minus - moment_3_i}
-        #         {"type": "eq", "fun": lambda x: sum(((r_i_s - a_i)**4) * x) + m4_i_plus - m4_i_minus - moment_4_i}
-        #     # poi, matrice diagonale, per le covarianze:
-        #     # i valori per così come è scritto il codice si duplicano, possiamo calcolare la metà dei constraint, dobbiamo caipre come
-        #     for i in assets:
-        #         for l in assets:
-        #             if i != l:
-        #                 {"type": "eq", "fun": lambda x: sum((r_i_s - a_i)*(r_l_s - a_l) * x) - covariance_i_l}
-        # assets_data = []
-        # for i in assets:
-        #     moment_data_i = []
-        #     for moment in moments_i:
-        #         moment_data_i.append(moment_weight_i * (mk_i_plus + mk_i_minus))
-        #     cov_data_i = []
-        #     for weight_cov in weight_covs_il:
-        #         cov_data_i.append(weight_cov * (cil_plus + cil_minus))
-        # min(sum(assets_data))
         return moment_weights
 
     @staticmethod
@@ -168,14 +147,7 @@ class NewTree:
     def compute_deviations(self, list_of_probabilities, parent, sibling_nodes=[]) -> pd.DataFrame:
         """
         usa questa funzione per generare le deviazioni, che fanno parte della funzione obiettivo. La quale a sua volta
-        sarà passata a optimization_func dove verrà eseguito il codice cplex. Alla fine, i constraint per il problema
-        cplex sono i seguenti:
-            posto -> x = [probabilità_nodo_s]
-            sum(x) == 1
-            x > LB per ogni x.
-            LB si definisce come segue:
-                LB = sensibility * 1 / len(x)
-                dove -> sensibility == .99 per ora, ma potrà essere modificata in futuro
+        sarà passata a optimization_func dove verrà eseguito il codice cplex.
 
         SU QUESTA FUNZIONE CI LAVORERO' IO, ASSICURANDOMI DI FARTI AVERE EFFICIENTEMENTE I DATI DELLE DEVIAZIONI PER IL
         CALCOLO DELLA FUNZIONE OBIETTIVO
@@ -187,9 +159,10 @@ class NewTree:
         first_term_3 = []
         first_term_4 = []
         cov_dev_matrix = []
+        # write this for loop in a better way! (try using map)
         for x in list_of_probabilities:
             used_node = sibling_nodes[i]
-            # used_node.assets_data['returns_t'] = used_node.assets_data['returns_t'] - 1
+            #                                    initial[i] * final[i] for
             first_term_1.append(used_node.assets_data['returns_t'] * x)
             first_term_2.append(((used_node.assets_data['residuals'])**2)*x)
             first_term_3.append(((used_node.assets_data['residuals'])**3)*x)
@@ -200,26 +173,26 @@ class NewTree:
                 self.map_covariance_deviations(x, used_node)
             )
             i += 1
-        deviation1 = pd.concat(first_term_1, axis=1).sum(axis=1) - self.assets['a_i']
-        deviation2 = pd.concat(first_term_2, axis=1).sum(axis=1) - parent.assets_data['sigma_t']**2
-        deviation3 = pd.concat(first_term_3, axis=1).sum(axis=1) - self.assets['third_moment']
-        deviation4 = pd.concat(first_term_4, axis=1).sum(axis=1) - self.assets['fourth_moment']
-        # rename columns, or maybe not... columns=['first', 'second', 'third', 'fourth']
-        deviations = pd.concat([deviation1, deviation2, deviation3, deviation4], axis=1)
+
+        deviations = pd.concat([
+            pd.concat(first_term_1, axis=1).sum(axis=1) - self.assets['a_i'],
+            pd.concat(first_term_2, axis=1).sum(axis=1) - parent.assets_data['sigma_t']**2,
+            pd.concat(first_term_3, axis=1).sum(axis=1) - self.assets['third_moment'],
+            pd.concat(first_term_4, axis=1).sum(axis=1) - self.assets['fourth_moment']
+        ], axis=1)
         cov_dev_df = pd.concat(cov_dev_matrix, axis=1).sum(axis=1) - parent.conditional_covariances[0]
         # then compute cov_deviations and return a full dataframe
         return abs(deviations), abs(cov_dev_df)
 
-    def target_function(self, list_of_probabilities, parent, sibling_nodes=[]):
+    def target_function(self, list_of_probabilities: list, parent, sibling_nodes=[]):
         """
         la funzione precedente calcola le deviazioi, qui, hai la funzione obiettivo, che sommatutte le deviazioni pesate
         di ciascun asset.
+        IT MUST READ CONSTRAINT IN A WAY THAT IS READABLE BY CPLEX...
         """
         deviations_dataframe, cov_deviations_dataframe = self.compute_deviations(
             list_of_probabilities, parent=parent, sibling_nodes=sibling_nodes
         )
-        # print(self.moments_weights)
-        # moltiplica dev_df con dev_weights_df e successivamente somma tutte le righe e colonne ottenendo un unico
         # moments_value = deviations_dataframe.sum().sum()
         # cov_value = cov_deviations_dataframe.sum()
         return deviations_dataframe.sum().sum() + cov_deviations_dataframe.sum()
@@ -240,10 +213,11 @@ class NewTree:
             Il tutto per ora è stato strutturato come se cplex prenda una funzione come parametro, ma va verificato ed
             in caso andranno fuse le varie parti del poblema di ottimizzazione dentro questa funzione
         """
-
+        # NOT GOOD, NOT EVEN FAST, FIND A WAY TO USE CPLEX
         n = len(sibling_nodes)
-
-        sensibility = 0.99
+        list_of_probabilities = [1 / n for _ in sibling_nodes]  # 'dummy startup list'
+        # if x is Continuous
+        sensibility = 0.5
         LB = sensibility / n
 
         m = Model("Optimization function")
@@ -254,8 +228,7 @@ class NewTree:
         m.print_information()
         sol = m.solve()
         print(sol)
-
-        return list_of_probabilities
+        return list_of_probabilities  # obj.x
 
     def sibling_nodes(self, parent, optimization_func: callable = None, matrix_cols=None, date=None) -> list:
         """
@@ -271,9 +244,14 @@ class NewTree:
         prob_list = optimization_func(parent, sibling_nodes)
         i = 0
         for node in sibling_nodes:
-            node.probability = prob_list[i]
+            node.probability = prob_list[i]  # make method to update probability...
+            # sibling_nodes[i] = node.to_dict()
             i += 1
         return sibling_nodes
+
+    @staticmethod
+    def dictionarize(x):
+        return x.apply(lambda y: y.go_to_dict())
 
     def generate_tree(self, init_matrix):
         """
@@ -300,7 +278,7 @@ class NewTree:
                 print("3 figli")
                 parents = init_matrix.to_numpy().flatten()
                 matrix_cols = ['0', '1', '2']
-                if counter < 5:
+                if counter < 3:
                     matrix = pd.DataFrame(columns=matrix_cols)
                     for parent in parents:
                         matrix.loc[len(matrix)] = self.sibling_nodes(
@@ -317,18 +295,21 @@ class NewTree:
                     matrix = pd.DataFrame(mapped)
 
             init_matrix = matrix  # hide it if return to old way...
-            # print(matrix.info())
+            # print(matrix)
             print(f'example at time: {counter}')
             print(matrix.loc[0].head(1).values[0].assets_data)
+            # replace_matrix with json data here and then create parquet file!
+            matrix = matrix.apply(lambda x: self.dictionarize(x), axis=1)
+            # print('new matrix: ')
+            # print(matrix)
+            matrix.to_parquet(f'period_{counter}')
             # print(matrix.loc[0].head(1).values[0].probability)
-            self.periods.append(counter)
             counter += 1
 
     def test_node(self):
         init_matrix = pd.DataFrame({self.root_node})
         # save initial matrix somewhere like a parquet file, just make sure that it saves entire instances in the cells
         self.generate_tree(init_matrix)
-        print(self.periods)
 
 # %%
 

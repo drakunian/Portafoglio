@@ -30,7 +30,10 @@ class ScenarioNode:
     The node by itself generates an executes all its methods in around 0.007422 seconds. So, how we can improve the
     tree generation? Is all in the optimal employment of RAM and Threads/processes at this point"""
     def __init__(
-            self, root: bool, parent, returns: [pd.DataFrame], cor_matrix: pd.DataFrame, period_date=None
+            self,
+            root: bool,
+            parent,  # dict | pd.DataFrame, parent_cond_prob: float,
+            returns: pd.DataFrame, cor_matrix: pd.DataFrame, period_date=None
     ):
         self.root = root
 
@@ -43,7 +46,6 @@ class ScenarioNode:
         self.conditional_volatilities = self.compute_variances()  # diagonal matrix of conditional variances
         self.conditional_covariances = self.compute_covariances(cor_matrix=cor_matrix)  # covariance matrix
 
-        self.parent_probability = parent.probability if root is False else None
         self.probability = 1  # of single Node, not conditional to the previous node probability
         self.cond_probability = self.probability * parent.cond_probability if root is False else self.probability
         # adds the dividends and other cashflows expected on the scenario...
@@ -68,6 +70,7 @@ class ScenarioNode:
         return f"node_n_from_period_{self.date}"
 
     def pass_asset_data(self, parent):
+        # filter assets data from parent!
         if self.root is False:
             # self.parent = parent
             # parent may be an id in the future...
@@ -97,10 +100,6 @@ class ScenarioNode:
             dummy['residuals'] = self.assets_data['residuals'] * 100
             dummy['sigma_t'] = self.assets_data['sigma_t'] * 100
             dummy['e_val'] = dummy['residuals'] / dummy['sigma_t']
-            # dummy['term_1'] = dummy['alpha[1]'] * (abs(dummy['e_val']) - np.sqrt(2/pi))
-            # dummy['term_2'] = dummy['gamma[1]'] * dummy['e_val']
-            # dummy['term_3'] = dummy['beta[1]'] * np.log(dummy['sigma_t']**2)
-            # dummy['log_sigma_2'] = dummy['omega'] + dummy['term_1'] + dummy['term_2'] + dummy['term_3']
             dummy['log_sigma_2'] = dummy['omega'] + dummy['alpha[1]']*(abs(dummy['e_val'])-np.sqrt(2/pi)) + \
                                    dummy['gamma[1]']*dummy['e_val'] + dummy['beta[1]']*np.log(dummy['sigma_t']**2)
 
@@ -115,10 +114,24 @@ class ScenarioNode:
         )
 
     def compute_covariances(self, cor_matrix: pd.DataFrame) -> pd.DataFrame:
-        # sqrt_variances = np.sqrt(self.conditional_variances)
+        """
+        SIMPLIFY AND SPEED UP THAT ONE HERE!
+        """
         cov_matrix = np.dot(self.conditional_volatilities, np.dot(cor_matrix, self.conditional_volatilities))
         cov_matrix = pd.DataFrame(cov_matrix, index=self.assets_data.index, columns=self.assets_data.index)
         cov_matrix = cov_matrix.where(np.triu(np.ones(cov_matrix.shape)).astype(np.bool_)).stack().reset_index()
         return cov_matrix.loc[cov_matrix['level_0'] != cov_matrix['level_1']]  # .set_index(['level_0', 'level_1'])
+
+    def go_to_dict(self):
+        """
+        converts node into a dictionary to be passed to the dataframe!
+        """
+        return [{
+            'node_id': f"node_n_from_period_{self.date}",
+            'assets_data': self.assets_data.to_json(orient='records'),
+            'cond_covariances': self.conditional_covariances.to_json(orient='records'),
+            'cond_probability': self.cond_probability
+        }]
+
 
 
