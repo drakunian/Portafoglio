@@ -17,7 +17,12 @@ from functools import partial
 import scipy.stats as stats
 from arch import arch_model
 from dateutil.relativedelta import relativedelta
+from pathlib import Path
+import pyarrow.parquet as pq
+import pyarrow as pa
 # from docplex.mp.model import Model
+import warnings
+warnings.filterwarnings('ignore')
 
 # import pyarrow.parquet as pq
 
@@ -85,7 +90,11 @@ class NewTree:
         print('initial assets data: ')
         print(self.assets)
         # now, set class parameters of ScenarioNode:
-        self.tree = [pd.read_parquet(f'period_{x}') for x in range(horizon + 1)]  # read parquet of all periods
+        fileDaVerificare = Path("Progetto_portafoglio\period_0.parquet")
+        #if fileDaVerificare.is_file():
+        print("Il file esiste")
+        self.tree = [pd.read_parquet(f'period_{x}.parquet') for x in range(horizon + 1)]# read parquet of all periods
+        print(f'ALBERO PRESO DAI FILE PARQUET \t{self.tree}')
 
     def compute_egarch_params(self) -> pd.DataFrame:
         eam_params_list = []
@@ -307,7 +316,10 @@ class NewTree:
             matrix = matrix.apply(lambda x: self.dictionarize(x), axis=1)
             # print('new matrix: ')
             # print(matrix)
-            matrix.to_parquet(f'period_{counter}')
+            #matrix.to_parquet(f'period_{counter}', index=True)
+            table = pa.Table.from_pandas(matrix)
+            pq.write_table(table, f'period_{counter}.parquet')
+
             # print(matrix.loc[0].head(1).values[0].probability)
             counter += 1
 
@@ -487,10 +499,10 @@ if __name__ == "__main__":
     #print(assets_df)
     portfolio = pd.DataFrame(ast_json).T  # a sto punto, json file prende anche currency (?)
     assets_df = pd.concat([assets_df[['stock_id', 'currency']].set_index('stock_id'), portfolio], axis=1)
-    current_assets_prices = pd.read_parquet('curr_assets_prices.parquet').set_index('stock_id')
+    current_assets_prices = pd.read_parquet('curr_assets_prices.parquet') # .set_index('stock_id')
     assets_df['close_prices_t'] = current_assets_prices['close'].astype('float64')
 
-    ast_ret = pd.read_parquet('asset_returns.parquet')
+    ast_ret = pd.read_parquet('assets_returns.parquet')
     print(ast_ret)
     #ast_ret.set_index(['datetime'])
 
