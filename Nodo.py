@@ -38,6 +38,7 @@ class ScenarioNode:
         self.root = root
 
         self.parent_coordinates = parent.coordinates
+
         self.coordinates: tuple = None
 
         self.date = period_date  # to be used for index of new row of returns
