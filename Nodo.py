@@ -33,9 +33,12 @@ class ScenarioNode:
             self,
             root: bool,
             parent,  # dict | pd.DataFrame, parent_cond_prob: float,
-            returns: pd.DataFrame, cor_matrix: pd.DataFrame, period_date=None
+            returns: [pd.DataFrame], cor_matrix: pd.DataFrame, period_date=None
     ):
         self.root = root
+
+        self.parent_coordinates = parent.coordinates
+        self.coordinates: tuple = None
 
         self.date = period_date  # to be used for index of new row of returns
         # self.parent = None  NON SERVE!
@@ -127,7 +130,7 @@ class ScenarioNode:
         converts node into a dictionary to be passed to the dataframe!
         """
         return [{
-            'node_id': f"node_n_from_period_{self.date}",
+            'node_coordinates': [self.parent_coordinates, self.coordinates],
             'assets_data': self.assets_data.to_json(orient='records'),
             'cond_covariances': self.conditional_covariances.to_json(orient='records'),
             'cond_probability': self.cond_probability
