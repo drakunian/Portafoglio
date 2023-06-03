@@ -56,7 +56,6 @@ class NewTree:
     """
     class-specific stats are good. measurement are done in 0.11382 seconds. All must be put into effort for root node.
     """
-
     def __init__(
             self,
             assets_df: pd.DataFrame,
@@ -91,8 +90,7 @@ class NewTree:
         eam_params_list = []
         for column in self.returns_data:
             rets = self.returns_data[column].dropna() * 100
-            eam = arch_model(rets, p=1, q=1, o=1, mean='constant', power=2.0, vol='EGARCH',
-                             dist='normal')  # --> ??????????
+            eam = arch_model(rets, p=1, q=1, o=1, mean='constant', power=2.0, vol='EGARCH', dist='normal')  # --> ??????????
             eam_fit = eam.fit(disp='off')
             eam_params = eam_fit.params
             last_vol = eam_fit.conditional_volatility.tail(1).values[0]
@@ -127,7 +125,7 @@ class NewTree:
         For now, be naive, 1/4 for each weight in moments so you have them directly in formula.
         same for cov factors weight
         """
-        moment_weights = pd.DataFrame(columns=['w1', 'w2', 'w3', 'w4'], index=self.assets.index).fillna(1 / 4)
+        moment_weights = pd.DataFrame(columns=['w1', 'w2', 'w3', 'w4'], index=self.assets.index).fillna(1/4)
         return moment_weights
 
     @staticmethod
@@ -138,8 +136,7 @@ class NewTree:
         for i, row in node.conditional_covariances.iterrows():
             l0 = node.conditional_covariances.loc[i, 'level_0']
             l1 = node.conditional_covariances.loc[i, 'level_1']
-            deviations.loc[i, 'first_term'] = node.assets_data.loc[l0, 'residuals'] * node.assets_data.loc[
-                l1, 'residuals'] * probability
+            deviations.loc[i, 'first_term'] = node.assets_data.loc[l0, 'residuals'] * node.assets_data.loc[l1, 'residuals'] * probability
         return deviations
 
     def compute_deviations(self, list_of_probabilities, parent, sibling_nodes=[]) -> pd.DataFrame:
@@ -162,9 +159,9 @@ class NewTree:
             used_node = sibling_nodes[i]
             #                                    initial[i] * final[i] for
             first_term_1.append(used_node.assets_data['returns_t'] * x)
-            first_term_2.append(((used_node.assets_data['residuals']) ** 2) * x)
-            first_term_3.append(((used_node.assets_data['residuals']) ** 3) * x)
-            first_term_4.append(((used_node.assets_data['residuals']) ** 4) * x)
+            first_term_2.append(((used_node.assets_data['residuals'])**2)*x)
+            first_term_3.append(((used_node.assets_data['residuals'])**3)*x)
+            first_term_4.append(((used_node.assets_data['residuals'])**4)*x)
             # add deviations for the covariances!
             cov_dev_matrix.append(
                 # make function that computes the values, indexing by level_0 and level_1
@@ -174,7 +171,7 @@ class NewTree:
 
         deviations = pd.concat([
             pd.concat(first_term_1, axis=1).sum(axis=1) - self.assets['a_i'],
-            pd.concat(first_term_2, axis=1).sum(axis=1) - parent.assets_data['sigma_t'] ** 2,
+            pd.concat(first_term_2, axis=1).sum(axis=1) - parent.assets_data['sigma_t']**2,
             pd.concat(first_term_3, axis=1).sum(axis=1) - self.assets['third_moment'],
             pd.concat(first_term_4, axis=1).sum(axis=1) - self.assets['fourth_moment']
         ], axis=1)
@@ -258,6 +255,10 @@ class NewTree:
     def dictionarize(x):
         return x.apply(lambda y: y.go_to_dict())
 
+    def find_coordinates(self, x):
+        for i in range(len(x)):
+            x[i].coordinates = (x.name, i)
+
     def generate_tree(self, init_matrix):
         """
         PER ORA, GENERARE 8 PERIODI IN QUESTO MODO RICHIEDE: 2.0 minuti e 37 secondi UTILIZZANDO TUTTI I CORES.
@@ -279,6 +280,7 @@ class NewTree:
                 matrix.loc[len(matrix)] = self.sibling_nodes(
                     root, optimization_func=self.optimization_func, matrix_cols=matrix.columns, date=counter
                 )
+                print(matrix)
             else:
                 print("3 figli")
                 parents = init_matrix.to_numpy().flatten()
@@ -298,17 +300,18 @@ class NewTree:
                             date=counter
                         ), parents)
                     matrix = pd.DataFrame(mapped)
-
+            matrix.apply(lambda x: self.find_coordinates(x), axis=1)
             init_matrix = matrix  # hide it if return to old way...
             # print(matrix)
             print(f'example at time: {counter}')
-            print(matrix.loc[0].head(1).values[0].assets_data)
+            print(matrix.loc[0].head(1).values[0].asset_data)
             # replace_matrix with json data here and then create parquet file!
             matrix = matrix.apply(lambda x: self.dictionarize(x), axis=1)
             # print('new matrix: ')
             # print(matrix)
             matrix.to_parquet(f'period_{counter}')
-            # print(matrix.loc[0].head(1).values[0].probability)
+            # table = pa.Table.from_pandas(matrix)
+            # pq.write_table(table, f'period_{counter}.parquet')
             counter += 1
 
     def test_node(self):
