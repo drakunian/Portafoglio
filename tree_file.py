@@ -84,7 +84,7 @@ class NewTree:
         print('initial assets data: ')
         print(self.assets)
         # now, set class parameters of ScenarioNode:
-        self.tree = [pd.read_parquet(f'period_{x}') for x in range(horizon + 1)]  # read parquet of all periods
+        self.tree = None
 
     def compute_egarch_params(self) -> pd.DataFrame:
         eam_params_list = []
@@ -241,7 +241,9 @@ class NewTree:
         """
         # vediamo di velocizzare questo for loop
         sibling_nodes = [
-            ScenarioNode(False, parent, self.ret_list, self.corr_matrix, period_date=date) for _ in matrix_cols
+            ScenarioNode(
+                False, parent=parent, returns=self.ret_list, cor_matrix=self.corr_matrix, period_date=date
+            ) for _ in matrix_cols
         ]
         prob_list = optimization_func(parent, sibling_nodes)
         i = 0
@@ -255,9 +257,10 @@ class NewTree:
     def dictionarize(x):
         return x.apply(lambda y: y.go_to_dict())
 
-    def find_coordinates(self, x):
+    @staticmethod
+    def find_coordinates(x):
         for i in range(len(x)):
-            x[i].coordinates = (x.name, i)
+            x[i].coordinates = [x.name, i]
 
     def generate_tree(self, init_matrix):
         """
@@ -280,7 +283,6 @@ class NewTree:
                 matrix.loc[len(matrix)] = self.sibling_nodes(
                     root, optimization_func=self.optimization_func, matrix_cols=matrix.columns, date=counter
                 )
-                print(matrix)
             else:
                 print("3 figli")
                 parents = init_matrix.to_numpy().flatten()
@@ -289,7 +291,7 @@ class NewTree:
                     matrix = pd.DataFrame(columns=matrix_cols)
                     for parent in parents:
                         matrix.loc[len(matrix)] = self.sibling_nodes(
-                            parent, optimization_func=self.optimization_func, matrix_cols=matrix_cols, date=counter
+                            parent=parent, optimization_func=self.optimization_func, matrix_cols=matrix_cols, date=counter
                         )
                 else:
                     with Pool() as po:
@@ -304,7 +306,7 @@ class NewTree:
             init_matrix = matrix  # hide it if return to old way...
             # print(matrix)
             print(f'example at time: {counter}')
-            print(matrix.loc[0].head(1).values[0].asset_data)
+            print(matrix.loc[0].head(1).values[0].assets_data)
             # replace_matrix with json data here and then create parquet file!
             matrix = matrix.apply(lambda x: self.dictionarize(x), axis=1)
             # print('new matrix: ')
@@ -323,6 +325,21 @@ class NewTree:
         init_matrix = pd.DataFrame({root_node})
         # save initial matrix somewhere like a parquet file, just make sure that it saves entire instances in the cells
         self.generate_tree(init_matrix)
+
+    @staticmethod
+    def convert_to_node(x):
+        for i in range(len(x)):
+            x[i] = ScenarioNode(init_data=x[i])
+        # return x.apply(lambda y: ScenarioNode(init_data=y))
+
+    def read_tree(self):
+        """
+        qui si riconvertono le celle da liste a ScenarioNode. Poi, si svilupperà la logica di iterazione lungo l'albero
+        """
+        self.tree = [pd.read_parquet(f'period_{x}') for x in range(self.horizon + 1)]  # read parquet of all periods
+        for matrix in self.tree:
+            matrix.apply(lambda x: self.convert_to_node(x), axis=1)
+        print(self.tree[-1].loc[0, 0].conditional_volatilities)
 
     def clear(self):
         # deletes the tree parquet files

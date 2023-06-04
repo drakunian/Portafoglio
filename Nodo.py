@@ -31,27 +31,31 @@ class ScenarioNode:
     tree generation? Is all in the optimal employment of RAM and Threads/processes at this point"""
     def __init__(
             self,
-            root: bool,
-            parent,  # dict | pd.DataFrame, parent_cond_prob: float,
-            returns: [pd.DataFrame], cor_matrix: pd.DataFrame, period_date=None
+            root: bool = False,
+            parent=None,  # ScenarioNode | pd.Dataframe
+            returns: [pd.DataFrame] = None, cor_matrix: pd.DataFrame = None, period_date=None,
+            init_data: list = None
     ):
+        # MODIFICA INIT COSì CHE LEGGE O INPUT PRIMARI, O LA LISTA DALLA CELLA DELLA MATRICE PARQUET
+        # HINT: SET ALL PARAMS TO None, Legge quali non sono none ed esegue di conseguenza
         self.root = root
+        if init_data is not None:
+            self.read_init_data(init_data[0])
+        else:
+            self.parent_coordinates = parent.coordinates if self.root is False else [0, 0]
+            self.coordinates: list = None
 
-        self.parent_coordinates = parent.coordinates
+            self.date = period_date  # to be used for index of new row of returns
+            # self.parent = None  NON SERVE!
+            self.assets_data = self.pass_asset_data(parent)  # modifies data of above parameters
 
-        self.coordinates: tuple = None
+            self.compute_returns(returns)
+            # probabilities measurement inputs:
+            self.conditional_volatilities = self.compute_variances()  # diagonal matrix of conditional variances
+            self.conditional_covariances = self.compute_covariances(cor_matrix=cor_matrix)  # covariance matrix
 
-        self.date = period_date  # to be used for index of new row of returns
-        # self.parent = None  NON SERVE!
-        self.assets_data = self.pass_asset_data(parent)  # modifies data of above parameters
-
-        self.compute_returns(returns)
-        # probabilities measurement inputs:
-        self.conditional_volatilities = self.compute_variances()  # diagonal matrix of conditional variances
-        self.conditional_covariances = self.compute_covariances(cor_matrix=cor_matrix)  # covariance matrix
-
-        self.probability = 1  # of single Node, not conditional to the previous node probability
-        self.cond_probability = self.probability * parent.cond_probability if root is False else self.probability
+            self.probability = 1  # of single Node, not conditional to the previous node probability
+            self.cond_probability = self.probability * parent.cond_probability if root is False else self.probability
         # adds the dividends and other cashflows expected on the scenario...
         """
         should also:
@@ -68,10 +72,17 @@ class ScenarioNode:
         self.rebalancing_vector = []  # vector of shares/value to buy (+) or sell (-) of each asset
 
     def __str__(self):
-        return f"node_n_from_period_{self.date}"
+        return f"node_{self.coordinates}_from_period_{self.date}"
 
     def __repr__(self):
-        return f"node_n_from_period_{self.date}"
+        return f"node_{self.coordinates}_from_period_{self.date}"
+
+    def read_init_data(self, init_data):
+        self.date = init_data['node_date']
+        self.parent_coordinates, self.coordinates = init_data['node_coordinates']
+        self.assets_data = pd.DataFrame(json.loads(init_data['assets_data'])).set_index('index')
+        self.conditional_covariances = pd.DataFrame(json.loads(init_data['cond_covariances']))
+        self.cond_probability = init_data['cond_probability']
 
     def pass_asset_data(self, parent):
         # filter assets data from parent!
@@ -131,11 +142,14 @@ class ScenarioNode:
         converts node into a dictionary to be passed to the dataframe!
         """
         return [{
+            'node_date': self.date,
             'node_coordinates': [self.parent_coordinates, self.coordinates],
-            'assets_data': self.assets_data.to_json(orient='records'),
+            'assets_data': self.assets_data.reset_index().to_json(orient='records'),  # already has variances...
             'cond_covariances': self.conditional_covariances.to_json(orient='records'),
             'cond_probability': self.cond_probability
+            # pass also cashflows data & dividends of given period
         }]
+
 
 
 
