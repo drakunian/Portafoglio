@@ -1,3 +1,4 @@
+import json
 from functools import partial
 # import pyarrow
 from math import e, log
@@ -34,16 +35,20 @@ class ScenarioNode:
             root: bool = False,
             parent=None,  # ScenarioNode | pd.Dataframe
             returns: [pd.DataFrame] = None, cor_matrix: pd.DataFrame = None, period_date=None,
-            init_data: list = None
+            init_data: list = None,
+            weight = None
     ):
         # MODIFICA INIT COSì CHE LEGGE O INPUT PRIMARI, O LA LISTA DALLA CELLA DELLA MATRICE PARQUET
         # HINT: SET ALL PARAMS TO None, Legge quali non sono none ed esegue di conseguenza
         self.root = root
+        self.weight = 0.5
+
         if init_data is not None:
             self.read_init_data(init_data[0])
         else:
             self.parent_coordinates = parent.coordinates if self.root is False else [0, 0]
             self.coordinates: list = None
+            self.son_coordinates: list = None
 
             self.date = period_date  # to be used for index of new row of returns
             # self.parent = None  NON SERVE!
@@ -56,6 +61,9 @@ class ScenarioNode:
 
             self.probability = 1  # of single Node, not conditional to the previous node probability
             self.cond_probability = self.probability * parent.cond_probability if root is False else self.probability
+
+
+
         # adds the dividends and other cashflows expected on the scenario...
         """
         should also:
@@ -79,7 +87,7 @@ class ScenarioNode:
 
     def read_init_data(self, init_data):
         self.date = init_data['node_date']
-        self.parent_coordinates, self.coordinates = init_data['node_coordinates']
+        self.parent_coordinates, self.coordinates, self.son_coordinates = init_data['node_coordinates']
         self.assets_data = pd.DataFrame(json.loads(init_data['assets_data'])).set_index('index')
         self.conditional_covariances = pd.DataFrame(json.loads(init_data['cond_covariances']))
         self.cond_probability = init_data['cond_probability']
@@ -143,13 +151,12 @@ class ScenarioNode:
         """
         return [{
             'node_date': self.date,
-            'node_coordinates': [self.parent_coordinates, self.coordinates],
+            'node_coordinates': [self.parent_coordinates, self.coordinates, self.son_coordinates],
             'assets_data': self.assets_data.reset_index().to_json(orient='records'),  # already has variances...
             'cond_covariances': self.conditional_covariances.to_json(orient='records'),
             'cond_probability': self.cond_probability
             # pass also cashflows data & dividends of given period
         }]
-
 
 
 
