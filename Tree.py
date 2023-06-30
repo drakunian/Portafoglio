@@ -1,6 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
 #import base64
+import gc
 import json
 import math
 import os
@@ -23,7 +24,7 @@ from arch import arch_model
 import pyarrow as pa
 import pyarrow.parquet as pq
 #from dateutil.relativedelta import relativedelta
-# from docplex.mp.model import Model
+from docplex.mp.model import Model
 #import paramiko
 #from scp import SCPClient
 #import ssh2.session
@@ -32,8 +33,6 @@ import pyarrow.parquet as pq
 #import subprocess
 import warnings
 
-import Iteration_tree
-from Iteration_tree import iteration
 
 #import io
 
@@ -68,6 +67,9 @@ def Load_file_json(assets, cash):
         json_object = json.loads(frase)
         json.dump(json_object, f, indent=2)
 
+def thread_process(func: callable, variable_df: pd.DataFrame):
+       with Pool() as po:
+            return po.map(func, variable_df.to_numpy())
 
 class NewTree:
     """
@@ -199,7 +201,7 @@ class NewTree:
         # then compute cov_deviations and return a full dataframe
         return abs(deviations), abs(cov_dev_df)
 
-    def target_function(self, list_of_probabilities, parent, sibling_nodes=[]):
+    def target_function(self, list_of_probabilities, parent, sibling_nodes=None):
         """
         la funzione precedente calcola le deviazioi, qui, hai la funzione obiettivo, che sommatutte le deviazioni pesate
         di ciascun asset.
@@ -228,29 +230,37 @@ class NewTree:
             Il tutto per ora è stato strutturato come se cplex prenda una funzione come parametro, ma va verificato ed
             in caso andranno fuse le varie parti del poblema di ottimizzazione dentro questa funzione
         """
-        # NOT GOOD, NOT EVEN FAST, FIND A WAY TO USE CPLEX
+        model = Model(name='esempio_modello')
+
         n = len(sibling_nodes)
         list_of_probabilities = [1 / n for _ in sibling_nodes]  # 'dummy startup list'
-        # if x is Continuous
-        val = self.target_function(list_of_probabilities, parent, sibling_nodes)
-        sensibility = 0.5
-        LB = sensibility / n
 
-        # m = Model("Optimization function")
-        # list_of_probabilities = m.continuous_var_list(n, LB, 1.0)
-        # print(list_of_probabilities)
-        # m.add_constraint(sum(list_of_probabilities) == 1)
-        # m.set_objective("min", self.target_function(list_of_probabilities, parent=parent, sibling_nodes=sibling_nodes))
-        # m.print_information()
-        # sol = m.solve()
-        # print(sol)
-        # constraints = ({"type": "eq", "fun": lambda x: sum(x) - 1})
-        # bounds = tuple((LB, 1) for _ in range(n))
-        # obj = sco.minimize(
-        #     self.target_function, np.array(list_of_probabilities),
-        #     args=(parent, sibling_nodes), method="SLSQP", bounds=bounds, constraints=constraints
-        # )
-        return list_of_probabilities  # obj.x
+        N = len(list_of_probabilities)
+        sensibility = 0.5
+        LB = sensibility * 1 / N
+
+
+        # Creazione delle variabili
+        variables = [model.continuous_var(lb=LB, name=f'x{i}') for i in range(N)]
+
+        # Vincolo
+        model.add_constraint(model.sum(variables[i] for i in range(N)) == 1, ctname='sum_probability')
+
+        model.set_objective("min", self.target_function(list_of_probabilities, parent=parent, sibling_nodes=sibling_nodes))
+        #model.minimize(self.target_function(list_of_probabilities, parent=parent, sibling_nodes=sibling_nodes))
+
+        # Risoluzione del modello
+        solution = model.solve()
+
+        # Stampa della soluzione
+        '''print('Valore ottimo:', solution.get_objective_value())
+        for i, var in enumerate(variables):
+            print(f'x{i} = {solution.get_value(var)}')'''
+
+        solution_list = [solution.get_value(var) for var in variables]
+
+        # Restituzione della lista delle soluzioni
+        return solution_list
 
     def sibling_nodes(self, parent, optimization_func=None, matrix_cols=None, date=None):
         """
@@ -266,6 +276,7 @@ class NewTree:
             ) for _ in matrix_cols
         ]
         prob_list = optimization_func(parent, sibling_nodes)
+        print(prob_list)
         i = 0
         for node in sibling_nodes:
             node.probability = prob_list[i]  # make method to update probability...
@@ -288,6 +299,10 @@ class NewTree:
                 sibling_row = x.name + i + 2 * x.name
                 x[i].son_coordinates = [sibling_row, i]
 
+    @staticmethod
+    def dictionarize_thread(row):
+        return [el.go_to_dict() for el in row]
+
     def generate_tree(self, init_matrix):
         """
         PER ORA, GENERARE 8 PERIODI IN QUESTO MODO RICHIEDE: 2.0 minuti e 37 secondi UTILIZZANDO TUTTI I CORES.
@@ -296,65 +311,74 @@ class NewTree:
         CI SONO MOMENTI IN CUI LA CPU NON E' USATA AL 100%. DOBBIAMO IDENTIFICARE COSA VIENE FATTO IN QUEI MOMENTI E FAR
         SI CHE VENGA USATA APPIENO ANCHE LI
         """
-
-        init_matrix = init_matrix
-        counter = 0
+        init_matrix, counter = init_matrix, 1
         while counter <= self.horizon:
-            #print(init_matrix.size)
-            #print('contatore: ', counter)
+            print('contatore: ', counter)
+            period_cfs, period_div = 0, 0  # taken from user inputs
             if init_matrix.size == 1:
                 row, col = 0, 0
                 root = init_matrix.iloc[row, col]
-                #print("10 figli")
                 matrix = pd.DataFrame(columns=['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'])
                 matrix.loc[len(matrix)] = self.sibling_nodes(
-                    root, optimization_func=self.optimization_func, matrix_cols=matrix.columns, date=counter
+                    root, optimization_func=self.optimization_func, matrix_cols=matrix.columns, date=counter,
+                    #period_cfs=period_cfs, period_div=period_div
                 )
             else:
-                #print("3 figli")
+                # print("3 figli")
                 parents = init_matrix.to_numpy().flatten()
+                init_matrix = None  # reset init matrix to free up ram space...
                 matrix_cols = ['0', '1', '2']
-                if counter < 3:
+                if counter < 4:
                     matrix = pd.DataFrame(columns=matrix_cols)
                     for parent in parents:
                         matrix.loc[len(matrix)] = self.sibling_nodes(
-                            parent=parent, optimization_func=self.optimization_func, matrix_cols=matrix_cols, date=counter
+                            parent=parent, optimization_func=self.optimization_func, matrix_cols=matrix_cols,
+                            date=counter
+                            #, period_cfs=period_cfs, period_div=period_div
                         )
+                    # matrix = self.x(
+                    #     parents, matrix_cols, counter, period_cfs, period_div, matrix=pd.DataFrame(columns=matrix_cols)
+                    # )
                 else:
-                    with Pool() as po:
+                    with Pool() as po:  # we can't do anything for speed in here... we just need a better processor...
                         mapped = po.map(partial(
                             self.sibling_nodes,
                             optimization_func=self.optimization_func,
                             matrix_cols=matrix_cols,
-                            date=counter
+                            date=counter,
                         ), parents)
-                    matrix = pd.DataFrame(mapped)
-            matrix.apply(lambda x: self.find_coordinates(x), axis=1)
+                    del parents  # reset parents to free up RAM
+                    matrix = pd.DataFrame(mapped, columns=matrix_cols)
+                    del mapped  # free up ram...
             init_matrix = matrix  # hide it if return to old way...
-            # print(matrix)
             print(f'example at time: {counter}')
             print(matrix.loc[0].head(1).values[0].assets_data)
-            # replace_matrix with json data here and then create parquet file!
-            matrix = matrix.apply(lambda x: self.dictionarize(x), axis=1)
-            # print('new matrix: ')
+            print('dimensioni: ', init_matrix.size)
+            # matrix = matrix.apply(lambda x: self.dictionarize(x), axis=1)
+            if counter < 7:
+                matrix = matrix.apply(lambda x: self.dictionarize(x), axis=1)
+            else:
+                matrix = pd.DataFrame(thread_process(self.dictionarize_thread, matrix),columns=matrix_cols)
             print(matrix)
-            #matrix.to_parquet(f'period_{counter}.parquet')
-            table = pa.Table.from_pandas(matrix)
-            pq.write_table(table, f'period_{counter}.parquet')
+            matrix.to_parquet(f'period_{counter}')
+            #table = pa.Table.from_pandas(matrix)
+            #pq.write_table(table, f'period_{counter}')
+            del matrix
+            gc.collect()
             counter += 1
-
-
 
     def test_node(self):
         root_node = ScenarioNode(
             root=True, parent=self.assets, returns=self.ret_list, cor_matrix=self.corr_matrix
         )
-        root_node.coordinate = (0, 0)
-        #print('assets data of root node:')
-        #print(root_node.assets_data)
-        init_matrix = pd.DataFrame({root_node})
+        print('assets data of root node:')
+        print(root_node.assets_data)
+        init_matrix = pd.DataFrame({root_node}, columns=['0'])
         # save initial matrix somewhere like a parquet file, just make sure that it saves entire instances in the cells
-        #self.generate_tree(init_matrix)
+        self.generate_tree(init_matrix)
+        print('tree generated!')
+        init_matrix.apply(lambda x: self.dictionarize(x), axis=1).to_parquet(f'period_{0}')
+
 
     @staticmethod
     def convert_to_node(x):
@@ -371,16 +395,12 @@ class NewTree:
             matrix.apply(lambda x: self.convert_to_node(x), axis=1)
         #print(self.tree[-1].loc[0, 0].conditional_volatilities)
 
-
-    def iteration(self):
-        Iteration_tree.iteration(self.tree)
     def clear(self):
         # deletes the tree parquet files
         pass
 
 
 # %%
-
 
 def main():  # variabili prese da input
     '''horizon = 24  # default
@@ -537,12 +557,11 @@ if __name__ == "__main__":
     # ast_ret.set_index(['datetime'])
 
     tree = NewTree(
-        assets_df, ast_ret, horizon=8
+        assets_df, ast_ret, horizon=9
     )
     tree.test_node()
 
-    tree.read_tree()
-    tree.iteration()
+    #Iteration_tree.read_tree()
 
     # nodoAlternativo = ScenarioNode(True, 1, None)
     # matrice = pd.DataFrame({nodoAlternativo})
