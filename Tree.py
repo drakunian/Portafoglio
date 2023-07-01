@@ -1,7 +1,15 @@
+<<<<<<< HEAD
+=======
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+#import base64
+import gc
+>>>>>>> origin/master
 import json
 import math
 import os
 import pprint
+<<<<<<< HEAD
 import random
 import re
 import timeit
@@ -23,8 +31,40 @@ from dateutil.relativedelta import relativedelta
 
 from Nodo import ScenarioNode, egarch_formula
 from dbconn_copy import DBConnection, DBOperations
+=======
+#import random
+import re
+import timeit
+#from cmath import pi, log
+from multiprocessing import Pool
 
-# from dbconn_copy import DBConnection, DBOperations
+#import cplex
+#import numpy as np
+import pandas as pd
+
+#from docplex.mp.model import Model
+#import itertools
+from functools import partial
+import scipy.stats as stats
+from arch import arch_model
+import pyarrow as pa
+import pyarrow.parquet as pq
+#from dateutil.relativedelta import relativedelta
+from docplex.mp.model import Model
+#import paramiko
+#from scp import SCPClient
+#import ssh2.session
+#import sys
+#import pickle
+#import subprocess
+import warnings
+
+
+#import io
+
+warnings.filterwarnings('ignore')
+
+from Nodo import ScenarioNode, egarch_formula
 
 pd.options.display.float_format = "{:,.6f}".format
 
@@ -33,13 +73,20 @@ def Load_file_json(assets, cash):
     # 06_ scrittura su file json
     '''results = pd.DataFrame(results)
     results.set_axis(["stock_id"], axis = "columns")
+<<<<<<< HEAD
     lista_assets = list(results["stock_id"])   '''         #DOVREI USARE QUESTA RIGA E NON QUELLA DOPO
     #lista_assets = list(df_assets["stock_id"])
    # print(lista_assets)
+=======
+    lista_assets = list(results["stock_id"])   '''  # DOVREI USARE QUESTA RIGA E NON QUELLA DOPO
+    # lista_assets = list(df_assets["stock_id"])
+    # print(lista_assets)
+>>>>>>> origin/master
     frase = ''
     with open("assets.json", "w") as f:
         inizio = '{'
         for i in range(len(assets)):
+<<<<<<< HEAD
             stringa = '"' + assets[i] + '": [{"weight":'+ str(0) + ', "n_assets":'+ str(0) + '}], \n'
             frase = frase + stringa
 
@@ -51,15 +98,38 @@ def Load_file_json(assets, cash):
         json_object = json.loads(frase)
         json.dump(json_object, f, indent=2)
 
+=======
+            stringa = '"' + assets[i] + '": [{"weight":' + str(0) + ', "n_assets":' + str(0) + '}], \n'
+            frase = frase + stringa
+
+        str_cash = '"cash": {"weight":' + str(1) + ', "n_assets":' + str(cash) + '} \n'
+        fine = '}'
+        frase = inizio + frase + str_cash + fine
+        #print(frase)
+        json_object = json.loads(frase)
+        json.dump(json_object, f, indent=2)
+
+def thread_process(func: callable, variable_df: pd.DataFrame):
+       with Pool() as po:
+            return po.map(func, variable_df.to_numpy())
+>>>>>>> origin/master
 
 class NewTree:
     """
     class-specific stats are good. measurement are done in 0.11382 seconds. All must be put into effort for root node.
     """
+<<<<<<< HEAD
     def __init__(
             self,
             assets_df: pd.DataFrame,
             assets_returns_data: pd.DataFrame,
+=======
+
+    def __init__(
+            self,
+            assets_df,
+            assets_returns_data,
+>>>>>>> origin/master
             horizon=12,
             cash_return=.01,
             period='1month',
@@ -76,11 +146,16 @@ class NewTree:
 
         self.returns_data = assets_returns_data
         self.corr_matrix = self.returns_data.corr()  # Constant correlation matrix
+<<<<<<< HEAD
         print(self.corr_matrix)
+=======
+        #print(self.corr_matrix)
+>>>>>>> origin/master
         self.assets[['omega', 'alpha[1]', 'gamma[1]', 'beta[1]', 'sigma_t']] = self.compute_egarch_params()  # function
         self.compute_moments()
         self.moments_weights = self.compute_moments_weight()
         self.ret_list = [self.returns_data[column].dropna() for column in self.returns_data.columns]
+<<<<<<< HEAD
         print('initial assets data: ')
         print(self.assets)
         # now, set class parameters of ScenarioNode:
@@ -91,6 +166,19 @@ class NewTree:
         for column in self.returns_data:
             rets = self.returns_data[column].dropna() * 100
             eam = arch_model(rets, p=1, q=1, o=1, mean='constant', power=2.0, vol='EGARCH', dist='normal')  # --> ??????????
+=======
+        #print('initial assets data: ')
+        #print(self.assets)
+        # now, set class parameters of ScenarioNode:
+        self.tree = None
+
+    def compute_egarch_params(self):
+        eam_params_list = []
+        for column in self.returns_data:
+            rets = self.returns_data[column].dropna() * 100
+            eam = arch_model(rets, p=1, q=1, o=1, mean='constant', power=2.0, vol='EGARCH',
+                             dist='normal')  # --> ??????????
+>>>>>>> origin/master
             eam_fit = eam.fit(disp='off')
             eam_params = eam_fit.params
             last_vol = eam_fit.conditional_volatility.tail(1).values[0]
@@ -118,14 +206,22 @@ class NewTree:
             )  # kurtosis
             # .loc --> used to access a group of rows and columns by label(s) or a boolean array
 
+<<<<<<< HEAD
     def compute_moments_weight(self) -> pd.DataFrame:
+=======
+    def compute_moments_weight(self):
+>>>>>>> origin/master
         """
         using principal component analysis (PCA), gets weights for each moment deviation, same for covariances.
 
         For now, be naive, 1/4 for each weight in moments so you have them directly in formula.
         same for cov factors weight
         """
+<<<<<<< HEAD
         moment_weights = pd.DataFrame(columns=['w1', 'w2', 'w3', 'w4'], index=self.assets.index).fillna(1/4)
+=======
+        moment_weights = pd.DataFrame(columns=['w1', 'w2', 'w3', 'w4'], index=self.assets.index).fillna(1 / 4)
+>>>>>>> origin/master
         return moment_weights
 
     @staticmethod
@@ -136,18 +232,30 @@ class NewTree:
         for i, row in node.conditional_covariances.iterrows():
             l0 = node.conditional_covariances.loc[i, 'level_0']
             l1 = node.conditional_covariances.loc[i, 'level_1']
+<<<<<<< HEAD
             deviations.loc[i, 'first_term'] = node.assets_data.loc[l0, 'residuals'] * node.assets_data.loc[l1, 'residuals'] * probability
+=======
+            deviations.loc[i, 'first_term'] = node.assets_data.loc[l0, 'residuals'] * node.assets_data.loc[
+                l1, 'residuals'] * probability
+>>>>>>> origin/master
         return deviations
 
     def compute_deviations(self, list_of_probabilities, parent, sibling_nodes=[]):
         """
         usa questa funzione per generare le deviazioni, che fanno parte della funzione obiettivo. La quale a sua volta
         sarà passata a optimization_func dove verrà eseguito il codice cplex.
+<<<<<<< HEAD
+=======
+
+>>>>>>> origin/master
         SU QUESTA FUNZIONE CI LAVORERO' IO, ASSICURANDOMI DI FARTI AVERE EFFICIENTEMENTE I DATI DELLE DEVIAZIONI PER IL
         CALCOLO DELLA FUNZIONE OBIETTIVO
         """
         # print([node.assets_data for node in sibling_nodes])
+<<<<<<< HEAD
         # vettorizza questo processo:
+=======
+>>>>>>> origin/master
         i = 0
         first_term_1 = []
         first_term_2 = []
@@ -168,7 +276,11 @@ class NewTree:
                 self.map_covariance_deviations(x, used_node)
             )
             i += 1
+<<<<<<< HEAD
         # non serve concatenare credo...
+=======
+
+>>>>>>> origin/master
         deviations = pd.concat([
             pd.concat(first_term_1, axis=1).sum(axis=1) - self.assets['a_i'],
             pd.concat(first_term_2, axis=1).sum(axis=1) - parent.assets_data['sigma_t'] ** 2,
@@ -201,6 +313,10 @@ class NewTree:
             LB si definisce come segue:
                 LB = sensibility * 1 / len(x); 0 < sensibility < 1
                 dove -> sensibility == .99 per ora, ma potrà essere modificata in futuro
+<<<<<<< HEAD
+=======
+
+>>>>>>> origin/master
         BISOGNA CONTROLLARE CHE COME SONO SCRITTI SOPRA, I CONSTRAINT SONO IN FORMATO CORRETTO PER CPLEX
         Poi, la questione è la seguente:
             La funzione obiettivo di cplex, ossia il parametro che l'ottimizzatore cplex prende, di che tipo è?
@@ -211,6 +327,7 @@ class NewTree:
 
         n = len(sibling_nodes)
         list_of_probabilities = [1 / n for _ in sibling_nodes]  # 'dummy startup list'
+<<<<<<< HEAD
         sensibility = 0.5
         LB = sensibility * 1 / n
         # Creazione delle variabili
@@ -221,10 +338,31 @@ class NewTree:
         model.set_objective("min", self.target_function(list_of_probabilities, parent=parent, sibling_nodes=sibling_nodes))
         # Risoluzione del modello
         solution = model.solve()
+=======
+
+        N = len(list_of_probabilities)
+        sensibility = 0.5
+        LB = sensibility * 1 / N
+
+
+        # Creazione delle variabili
+        variables = [model.continuous_var(lb=LB, name=f'x{i}') for i in range(N)]
+
+        # Vincolo
+        model.add_constraint(model.sum(variables[i] for i in range(N)) == 1, ctname='sum_probability')
+
+        model.set_objective("min", self.target_function(list_of_probabilities, parent=parent, sibling_nodes=sibling_nodes))
+        #model.minimize(self.target_function(list_of_probabilities, parent=parent, sibling_nodes=sibling_nodes))
+
+        # Risoluzione del modello
+        solution = model.solve()
+
+>>>>>>> origin/master
         # Stampa della soluzione
         '''print('Valore ottimo:', solution.get_objective_value())
         for i, var in enumerate(variables):
             print(f'x{i} = {solution.get_value(var)}')'''
+<<<<<<< HEAD
         solution_list = [solution.get_value(var) for var in variables]
         # Restituzione della lista delle soluzioni
         return solution_list
@@ -233,6 +371,15 @@ class NewTree:
             self, parent, optimization_func: callable = None,
             matrix_cols=None, date=None, period_cfs: float = None, period_div: pd.DataFrame = None
     ) -> list:
+=======
+
+        solution_list = [solution.get_value(var) for var in variables]
+
+        # Restituzione della lista delle soluzioni
+        return solution_list
+
+    def sibling_nodes(self, parent, optimization_func=None, matrix_cols=None, date=None):
+>>>>>>> origin/master
         """
         Qui noi chiamiamo la funzione: self.optimization_func, a cui passiamo parent e la lista di sibling_nodes appena
         creata.
@@ -242,6 +389,7 @@ class NewTree:
         # vediamo di velocizzare questo for loop
         sibling_nodes = [
             ScenarioNode(
+<<<<<<< HEAD
                 False, parent=parent, cfs=period_cfs, returns=self.ret_list,
                 div=period_div, cor_matrix=self.corr_matrix, period_date=date
             ) for _ in matrix_cols
@@ -251,6 +399,17 @@ class NewTree:
         for node in sibling_nodes:
             node.probability = prob_list[i]
             node.compute_conditional_probability(parent.cond_probability)
+=======
+                False, parent=parent, returns=self.ret_list, cor_matrix=self.corr_matrix, period_date=date
+            ) for _ in matrix_cols
+        ]
+        prob_list = optimization_func(parent, sibling_nodes)
+        print(prob_list)
+        i = 0
+        for node in sibling_nodes:
+            node.probability = prob_list[i]  # make method to update probability...
+            # sibling_nodes[i] = node.to_dict()
+>>>>>>> origin/master
             i += 1
         return sibling_nodes
 
@@ -259,6 +418,20 @@ class NewTree:
         return x.apply(lambda y: y.go_to_dict())
 
     @staticmethod
+<<<<<<< HEAD
+=======
+    def find_coordinates(x):
+        for i in range(len(x)):
+            x[i].coordinates = [x.name, i]
+            if x.name == 0:
+                sibling_row = x.name + i
+                x[i].son_coordinates = [sibling_row, i]
+            elif x.name > 0:
+                sibling_row = x.name + i + 2 * x.name
+                x[i].son_coordinates = [sibling_row, i]
+
+    @staticmethod
+>>>>>>> origin/master
     def dictionarize_thread(row):
         return [el.go_to_dict() for el in row]
 
@@ -280,7 +453,11 @@ class NewTree:
                 matrix = pd.DataFrame(columns=['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'])
                 matrix.loc[len(matrix)] = self.sibling_nodes(
                     root, optimization_func=self.optimization_func, matrix_cols=matrix.columns, date=counter,
+<<<<<<< HEAD
                     period_cfs=period_cfs, period_div=period_div
+=======
+                    #period_cfs=period_cfs, period_div=period_div
+>>>>>>> origin/master
                 )
             else:
                 # print("3 figli")
@@ -292,7 +469,12 @@ class NewTree:
                     for parent in parents:
                         matrix.loc[len(matrix)] = self.sibling_nodes(
                             parent=parent, optimization_func=self.optimization_func, matrix_cols=matrix_cols,
+<<<<<<< HEAD
                             date=counter, period_cfs=period_cfs, period_div=period_div
+=======
+                            date=counter
+                            #, period_cfs=period_cfs, period_div=period_div
+>>>>>>> origin/master
                         )
                     # matrix = self.x(
                     #     parents, matrix_cols, counter, period_cfs, period_div, matrix=pd.DataFrame(columns=matrix_cols)
@@ -304,8 +486,11 @@ class NewTree:
                             optimization_func=self.optimization_func,
                             matrix_cols=matrix_cols,
                             date=counter,
+<<<<<<< HEAD
                             period_cfs=period_cfs,
                             period_div=period_div
+=======
+>>>>>>> origin/master
                         ), parents)
                     del parents  # reset parents to free up RAM
                     matrix = pd.DataFrame(mapped, columns=matrix_cols)
@@ -318,8 +503,16 @@ class NewTree:
             if counter < 7:
                 matrix = matrix.apply(lambda x: self.dictionarize(x), axis=1)
             else:
+<<<<<<< HEAD
                 matrix = pd.DataFrame(thread_process(self.dictionarize_thread, matrix))
             matrix.to_parquet(f'period_{counter}')
+=======
+                matrix = pd.DataFrame(thread_process(self.dictionarize_thread, matrix),columns=matrix_cols)
+            print(matrix)
+            matrix.to_parquet(f'period_{counter}')
+            #table = pa.Table.from_pandas(matrix)
+            #pq.write_table(table, f'period_{counter}')
+>>>>>>> origin/master
             del matrix
             gc.collect()
             counter += 1
@@ -336,6 +529,10 @@ class NewTree:
         print('tree generated!')
         init_matrix.apply(lambda x: self.dictionarize(x), axis=1).to_parquet(f'period_{0}')
 
+<<<<<<< HEAD
+=======
+
+>>>>>>> origin/master
     @staticmethod
     def convert_to_node(x):
         for i in range(len(x)):
@@ -346,19 +543,33 @@ class NewTree:
         """
         qui si riconvertono le celle da liste a ScenarioNode. Poi, si svilupperà la logica di iterazione lungo l'albero
         """
+<<<<<<< HEAD
         self.tree = [pd.read_parquet(f'period_{x}') for x in range(self.horizon + 1)]  # read parquet of all periods
         for matrix in self.tree:
             matrix.apply(lambda x: self.convert_to_node(x), axis=1)
         print(self.tree[-1].loc[0, 0].conditional_volatilities)
+=======
+        self.tree = [pd.read_parquet(f'period_{x}.parquet') for x in range(self.horizon + 1)]  # read parquet of all periods
+        for matrix in self.tree:
+            matrix.apply(lambda x: self.convert_to_node(x), axis=1)
+        #print(self.tree[-1].loc[0, 0].conditional_volatilities)
+>>>>>>> origin/master
 
     def clear(self):
         # deletes the tree parquet files
         pass
 
+<<<<<<< HEAD
 # %%
 
 
 def main(): #variabili prese da input
+=======
+
+# %%
+
+def main():  # variabili prese da input
+>>>>>>> origin/master
     '''horizon = 24  # default
     while True:
         time_division = int(input("Inserisci la divisione del tempo, (1) settimanale (2) mensile (3) annuale: \t"))
@@ -385,8 +596,12 @@ def main(): #variabili prese da input
     annuaties = None # dataframe, tante righe quante sono i periodi, da prendere in input, di default rimane None
     cf_list = None # da prendere in input una lista lunga quanto i periodi, altrimenti rimane None'''
 
+<<<<<<< HEAD
 
 # ------------------------------------------------------------------------------------------------------------------------
+=======
+    # ------------------------------------------------------------------------------------------------------------------------
+>>>>>>> origin/master
 
     # 03_chiedo quali stock_id vuole usare
     '''print("Inserisci solo gli indici degli asset che vuoi usare, separati da uno INVIO. Quando hai finito digita STOP.")
@@ -409,14 +624,21 @@ def main(): #variabili prese da input
     print(assets_list)
     print(len(assets_list))'''
 
+<<<<<<< HEAD
 # ------------------------------------------------------------------------------------------------------------------------
 
     #prendo i dati dal file data.txt
+=======
+    # ------------------------------------------------------------------------------------------------------------------------
+
+    # prendo i dati dal file data.txt
+>>>>>>> origin/master
     data_list = []
     data = open("data.txt", "r")
     for row in data:
         row = data.readline()
         if "/" not in row:
+<<<<<<< HEAD
             row = re.sub('[\n]', '', row) # per eliminare i \n alla fine di ogni riga
             data_list.append(row)
             data.readline()   # serve per evitare le righe vuote (non è bellissimo, ma funziona)
@@ -461,6 +683,41 @@ def main(): #variabili prese da input
 
     # 03_chiedo quali stock_id vuole usare
     print("Inserisci solo gli stock_id degli asset che vuoi usare, separati da uno INVIO. Quando hai finito digita STOP.")
+=======
+            row = re.sub('[\n]', '', row)  # per eliminare i \n alla fine di ogni riga
+            data_list.append(row)
+            data.readline()  # serve per evitare le righe vuote (non è bellissimo, ma funziona)
+
+    #print(data_list)
+
+    horizon, lb, ub, risk, cash_return, alpha, VaR_list, LCVar, annuaties, cf_list, assets_list, cash = data_list[0], \
+        data_list[1], data_list[2], data_list[3], data_list[4], data_list[5], data_list[6], data_list[7], data_list[8], \
+        data_list[9], data_list[10], data_list[11]
+    # print(horizon, lb, ub, risk, cash_return, alpha, VaR_list, LCVar, annuaties, cf_list, assets_list, cash)
+    assets_list, VaR_list, LCVar = tuple(assets_list.split(',')), VaR_list.split(','), LCVar.split(
+        ',')  # per trasformare le stringhe in liste
+    #print(type(assets_list))
+    #print(assets_list)
+    # ------------------------------------------------------------------------------------------------------------------------
+
+    # il risultato della query è il dataframe assets_df
+
+    # collegamento con la query multi_value_fetch
+    '''dc = DBConnection()
+    do = DBOperations(dc.conn)
+    sd = [['stock_id', 'symbol'], 'stock_data']
+    ed = [['etf_id', 'symbol'], 'etf_data']
+    stock_df, etf_df = do.multi_value_fetch(sd,
+                                            ed)  # restituisce una lista, ma tutto il contenuto della query va a finire nella prima cella
+    # stock_df = pd.DataFrame(stock_df[0], columns=['stock_id', 'symbol'])
+    etf_df = etf_df.rename(
+        columns={'etf_id': 'stock_id'})  # rinominiamo la colonna perchè altrimenti la concatenazione viene sballata
+    assets_df = pd.concat([stock_df, etf_df]).reset_index(drop=True)
+    #print(assets_df)
+
+    # 03_chiedo quali stock_id vuole usare
+    #print("Inserisci solo gli stock_id degli asset che vuoi usare, separati da uno INVIO. Quando hai finito digita STOP.")
+>>>>>>> origin/master
     i = 0
     assets_list = []
     while True:
@@ -471,6 +728,7 @@ def main(): #variabili prese da input
 
         i += 1
 
+<<<<<<< HEAD
     df_input = assets_df['stock_id'].isin(assets_list) #cerco nella colonna stock_id del dataframe i valori nella lista assets_list
     assets_df = assets_df[df_input]
     stock_df.reset_index(inplace=True, drop=True)
@@ -478,6 +736,16 @@ def main(): #variabili prese da input
     assets_df = assets_df['stock_id'].values.tolist() #trasformo la colonna del dataframe in una lista per il json
     print(assets_df) #PROBLEMA DATO CHE GLI ETF SONO UGUALI AGLI ASSETS POTREBBE ESSERE CHE INSERISCO UNO STOCK_ID E TROVO 2 OUTPUT
 # ------------------------------------------------------------------------------------------------------------------------
+=======
+    df_input = assets_df['stock_id'].isin(
+        assets_list)  # cerco nella colonna stock_id del dataframe i valori nella lista assets_list
+    assets_df = assets_df[df_input]
+    stock_df.reset_index(inplace=True, drop=True)
+    # print(assets_df)
+    assets_df = assets_df['stock_id'].values.tolist()  # trasformo la colonna del dataframe in una lista per il json
+    #print(assets_df)
+    # ------------------------------------------------------------------------------------------------------------------------
+>>>>>>> origin/master
 
     # 05_controllare se esiste già un file json e riproporlo
     # https://www.scaler.com/topics/seek-function-in-python/
@@ -485,11 +753,16 @@ def main(): #variabili prese da input
         file.seek(0, os.SEEK_END)  # puntatore, si sposta di 0 lettere, partendo dal fondo
         isempty = file.tell() == 0  # returns the current file position in a file stream.
         file.seek(0)  # riavvolgere il file
+<<<<<<< HEAD
         print(isempty)
+=======
+        #print(isempty)
+>>>>>>> origin/master
         if isempty == False:
             with open('assets.json', 'r') as f:
                 data = f.read()
                 json_data = json.loads(data)
+<<<<<<< HEAD
                 pprint.pprint(
                     json_data)  # pprint --> fornisce la capacità di stampare la rappresentazione formattata dei dati JSON.
     
@@ -501,19 +774,39 @@ def main(): #variabili prese da input
         else:
             #results = ['AAPL_NASDAQ_USD', 'AMZN_NASDAQ_USD', 'EUE_MTA_EUR', 'JPM_NYSE_USD', 'PRY_MTA_EUR', 'SXRV_XETR_EUR', 'UNIR_MTA_EUR']
             Load_file_json(assets_df, cash)
+=======
+                pprint.pprint(json_data)  # pprint --> fornisce la capacità di stampare la rappresentazione formattata dei dati JSON.
+
+            risposta = str(input("Esiste un file contenente degli assets già utilizzati. Vuoi usarlo? \t"))
+            if risposta.upper() == "NO":
+                # faccio una prova con un lista preimpostata
+                # results =['AAPL_NASDAQ_USD', 'AMZN_NASDAQ_USD', 'EUE_MTA_EUR', 'JPM_NYSE_USD', 'PRY_MTA_EUR', 'SXRV_XETR_EUR', 'UNIR_MTA_EUR']
+                Load_file_json(assets_df, cash)  # devo passargli gli assets_list ma per ora non funziona il database
+        else:
+            # results = ['AAPL_NASDAQ_USD', 'AMZN_NASDAQ_USD', 'EUE_MTA_EUR', 'JPM_NYSE_USD', 'PRY_MTA_EUR', 'SXRV_XETR_EUR', 'UNIR_MTA_EUR']
+            Load_file_json(assets_df, cash)'''
+
+>>>>>>> origin/master
 
 # ------------------------------------------------------------------------------------------------------------------------
 
 if __name__ == "__main__":
+<<<<<<< HEAD
 
     start = timeit.default_timer()
     """
     per velocizzare il codice per ora, si leggono ggli input direttamente dai file, poi, si sostituirà questa parte con
+=======
+    start = timeit.default_timer()
+    """
+    per velocizzare il codice per ora, si leggono gli input direttamente dai file, poi, si sostituirà questa parte con
+>>>>>>> origin/master
     la funzione di raccolta di input che hai scritto
     """
 
     ast_json = json.loads(open('assets.json', 'r').read())
     assets_df = pd.read_parquet('assets_df.parquet')
+<<<<<<< HEAD
     #print(assets_df)
     portfolio = pd.DataFrame(ast_json).T  # a sto punto, json file prende anche currency (?)
     assets_df = pd.concat([assets_df[['stock_id', 'currency']].set_index('stock_id'), portfolio], axis=1)
@@ -529,6 +822,25 @@ if __name__ == "__main__":
     )
     tree.test_node()
 
+=======
+    # print(assets_df)
+    portfolio = pd.DataFrame(ast_json).T  # a sto punto, json file prende anche currency (?)
+    assets_df = pd.concat([assets_df[['stock_id', 'currency']].set_index('stock_id'), portfolio], axis=1)
+    current_assets_prices = pd.read_parquet('curr_assets_prices.parquet')  # .set_index('stock_id')
+    assets_df['close_prices_t'] = current_assets_prices['close'].astype('float64')
+
+    ast_ret = pd.read_parquet('assets_returns.parquet')
+    #print(ast_ret)
+    # ast_ret.set_index(['datetime'])
+
+    tree = NewTree(
+        assets_df, ast_ret, horizon=9
+    )
+    tree.test_node()
+
+    #Iteration_tree.read_tree()
+
+>>>>>>> origin/master
     # nodoAlternativo = ScenarioNode(True, 1, None)
     # matrice = pd.DataFrame({nodoAlternativo})
     # print(matrice)
@@ -537,6 +849,7 @@ if __name__ == "__main__":
     # dataframe = pd.read_json("assets.json")
     stop = timeit.default_timer()
     minutes = (stop - start) / 60
+<<<<<<< HEAD
     print('full minutes: ', minutes)
     seconds, minutes = math.modf(minutes)
     print(f'{minutes} minuti e {round(seconds * 60)} secondi')
@@ -611,3 +924,8 @@ nelle colonne l'identificativo del parent'''
     valore del cash_in e cash_out del periodo
     vettore dei ribilanciamenti
     metodo ricorsivo per la creazione dei figli (finisce quando arrivo all'ultimo periodo)'''
+=======
+    #print('full minutes: ', minutes)
+    seconds, minutes = math.modf(minutes)
+    #print(f'{minutes} minuti e {round(seconds * 60)} secondi')
+>>>>>>> origin/master
