@@ -139,15 +139,15 @@ class NewTree:
             deviations.loc[i, 'first_term'] = node.assets_data.loc[l0, 'residuals'] * node.assets_data.loc[l1, 'residuals'] * probability
         return deviations
 
-    def compute_deviations(self, list_of_probabilities, parent, sibling_nodes=[]) -> pd.DataFrame:
+    def compute_deviations(self, list_of_probabilities, parent, sibling_nodes=[]):
         """
         usa questa funzione per generare le deviazioni, che fanno parte della funzione obiettivo. La quale a sua volta
         sarà passata a optimization_func dove verrà eseguito il codice cplex.
-
         SU QUESTA FUNZIONE CI LAVORERO' IO, ASSICURANDOMI DI FARTI AVERE EFFICIENTEMENTE I DATI DELLE DEVIAZIONI PER IL
         CALCOLO DELLA FUNZIONE OBIETTIVO
         """
         # print([node.assets_data for node in sibling_nodes])
+        # vettorizza questo processo:
         i = 0
         first_term_1 = []
         first_term_2 = []
@@ -159,19 +159,19 @@ class NewTree:
             used_node = sibling_nodes[i]
             #                                    initial[i] * final[i] for
             first_term_1.append(used_node.assets_data['returns_t'] * x)
-            first_term_2.append(((used_node.assets_data['residuals'])**2)*x)
-            first_term_3.append(((used_node.assets_data['residuals'])**3)*x)
-            first_term_4.append(((used_node.assets_data['residuals'])**4)*x)
+            first_term_2.append(((used_node.assets_data['residuals']) ** 2) * x)
+            first_term_3.append(((used_node.assets_data['residuals']) ** 3) * x)
+            first_term_4.append(((used_node.assets_data['residuals']) ** 4) * x)
             # add deviations for the covariances!
             cov_dev_matrix.append(
                 # make function that computes the values, indexing by level_0 and level_1
                 self.map_covariance_deviations(x, used_node)
             )
             i += 1
-
+        # non serve concatenare credo...
         deviations = pd.concat([
             pd.concat(first_term_1, axis=1).sum(axis=1) - self.assets['a_i'],
-            pd.concat(first_term_2, axis=1).sum(axis=1) - parent.assets_data['sigma_t']**2,
+            pd.concat(first_term_2, axis=1).sum(axis=1) - parent.assets_data['sigma_t'] ** 2,
             pd.concat(first_term_3, axis=1).sum(axis=1) - self.assets['third_moment'],
             pd.concat(first_term_4, axis=1).sum(axis=1) - self.assets['fourth_moment']
         ], axis=1)
@@ -179,7 +179,7 @@ class NewTree:
         # then compute cov_deviations and return a full dataframe
         return abs(deviations), abs(cov_dev_df)
 
-    def target_function(self, list_of_probabilities: list, parent, sibling_nodes=[]):
+    def target_function(self, list_of_probabilities, parent, sibling_nodes=None):
         """
         la funzione precedente calcola le deviazioi, qui, hai la funzione obiettivo, che sommatutte le deviazioni pesate
         di ciascun asset.
@@ -192,7 +192,7 @@ class NewTree:
         # cov_value = cov_deviations_dataframe.sum()
         return deviations_dataframe.sum().sum() + cov_deviations_dataframe.sum()
 
-    def optimization_func(self, parent, sibling_nodes: list):
+    def optimization_func(self, parent, sibling_nodes):
         """
         Alla fine, i constraint per il problema cplex sono i seguenti:
             posto -> x = [probabilità_nodo_s per ogni nod in sibling_nodes]
@@ -201,38 +201,38 @@ class NewTree:
             LB si definisce come segue:
                 LB = sensibility * 1 / len(x); 0 < sensibility < 1
                 dove -> sensibility == .99 per ora, ma potrà essere modificata in futuro
-
         BISOGNA CONTROLLARE CHE COME SONO SCRITTI SOPRA, I CONSTRAINT SONO IN FORMATO CORRETTO PER CPLEX
         Poi, la questione è la seguente:
             La funzione obiettivo di cplex, ossia il parametro che l'ottimizzatore cplex prende, di che tipo è?
             Il tutto per ora è stato strutturato come se cplex prenda una funzione come parametro, ma va verificato ed
             in caso andranno fuse le varie parti del poblema di ottimizzazione dentro questa funzione
         """
-        # NOT GOOD, NOT EVEN FAST, FIND A WAY TO USE CPLEX
+        model = Model(name='esempio_modello')
+
         n = len(sibling_nodes)
         list_of_probabilities = [1 / n for _ in sibling_nodes]  # 'dummy startup list'
-        # if x is Continuous
-        val = self.target_function(list_of_probabilities, parent, sibling_nodes)
         sensibility = 0.5
-        LB = sensibility / n
+        LB = sensibility * 1 / n
+        # Creazione delle variabili
+        variables = [model.continuous_var(lb=LB, name=f'x{i}') for i in range(n)]
+        # Vincolo
+        model.add_constraint(model.sum(variables[i] for i in range(n)) == 1, ctname='sum_probability')
 
-        # m = Model("Optimization function")
-        # list_of_probabilities = m.continuous_var_list(n, LB, 1.0)
-        # print(list_of_probabilities)
-        # m.add_constraint(sum(list_of_probabilities) == 1)
-        # m.set_objective("min", self.target_function(list_of_probabilities, parent=parent, sibling_nodes=sibling_nodes))
-        # m.print_information()
-        # sol = m.solve()
-        # print(sol)
-        # constraints = ({"type": "eq", "fun": lambda x: sum(x) - 1})
-        # bounds = tuple((LB, 1) for _ in range(n))
-        # obj = sco.minimize(
-        #     self.target_function, np.array(list_of_probabilities),
-        #     args=(parent, sibling_nodes), method="SLSQP", bounds=bounds, constraints=constraints
-        # )
-        return list_of_probabilities  # obj.x
+        model.set_objective("min", self.target_function(list_of_probabilities, parent=parent, sibling_nodes=sibling_nodes))
+        # Risoluzione del modello
+        solution = model.solve()
+        # Stampa della soluzione
+        '''print('Valore ottimo:', solution.get_objective_value())
+        for i, var in enumerate(variables):
+            print(f'x{i} = {solution.get_value(var)}')'''
+        solution_list = [solution.get_value(var) for var in variables]
+        # Restituzione della lista delle soluzioni
+        return solution_list
 
-    def sibling_nodes(self, parent, optimization_func: callable = None, matrix_cols=None, date=None) -> list:
+    def sibling_nodes(
+            self, parent, optimization_func: callable = None,
+            matrix_cols=None, date=None, period_cfs: float = None, period_div: pd.DataFrame = None
+    ) -> list:
         """
         Qui noi chiamiamo la funzione: self.optimization_func, a cui passiamo parent e la lista di sibling_nodes appena
         creata.
@@ -242,14 +242,15 @@ class NewTree:
         # vediamo di velocizzare questo for loop
         sibling_nodes = [
             ScenarioNode(
-                False, parent=parent, returns=self.ret_list, cor_matrix=self.corr_matrix, period_date=date
+                False, parent=parent, cfs=period_cfs, returns=self.ret_list,
+                div=period_div, cor_matrix=self.corr_matrix, period_date=date
             ) for _ in matrix_cols
         ]
         prob_list = optimization_func(parent, sibling_nodes)
         i = 0
         for node in sibling_nodes:
-            node.probability = prob_list[i]  # make method to update probability...
-            # sibling_nodes[i] = node.to_dict()
+            node.probability = prob_list[i]
+            node.compute_conditional_probability(parent.cond_probability)
             i += 1
         return sibling_nodes
 
@@ -258,9 +259,8 @@ class NewTree:
         return x.apply(lambda y: y.go_to_dict())
 
     @staticmethod
-    def find_coordinates(x):
-        for i in range(len(x)):
-            x[i].coordinates = [x.name, i]
+    def dictionarize_thread(row):
+        return [el.go_to_dict() for el in row]
 
     def generate_tree(self, init_matrix):
         """
@@ -270,50 +270,58 @@ class NewTree:
         CI SONO MOMENTI IN CUI LA CPU NON E' USATA AL 100%. DOBBIAMO IDENTIFICARE COSA VIENE FATTO IN QUEI MOMENTI E FAR
         SI CHE VENGA USATA APPIENO ANCHE LI
         """
-        init_matrix = init_matrix
-        counter = 0
+        init_matrix, counter = init_matrix, 1
         while counter <= self.horizon:
-            print(init_matrix.size)
             print('contatore: ', counter)
+            period_cfs, period_div = 0, 0  # taken from user inputs
             if init_matrix.size == 1:
                 row, col = 0, 0
                 root = init_matrix.iloc[row, col]
-                print("10 figli")
                 matrix = pd.DataFrame(columns=['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'])
                 matrix.loc[len(matrix)] = self.sibling_nodes(
-                    root, optimization_func=self.optimization_func, matrix_cols=matrix.columns, date=counter
+                    root, optimization_func=self.optimization_func, matrix_cols=matrix.columns, date=counter,
+                    period_cfs=period_cfs, period_div=period_div
                 )
             else:
-                print("3 figli")
+                # print("3 figli")
                 parents = init_matrix.to_numpy().flatten()
+                init_matrix = None  # reset init matrix to free up ram space...
                 matrix_cols = ['0', '1', '2']
-                if counter < 3:
+                if counter < 4:
                     matrix = pd.DataFrame(columns=matrix_cols)
                     for parent in parents:
                         matrix.loc[len(matrix)] = self.sibling_nodes(
-                            parent=parent, optimization_func=self.optimization_func, matrix_cols=matrix_cols, date=counter
+                            parent=parent, optimization_func=self.optimization_func, matrix_cols=matrix_cols,
+                            date=counter, period_cfs=period_cfs, period_div=period_div
                         )
+                    # matrix = self.x(
+                    #     parents, matrix_cols, counter, period_cfs, period_div, matrix=pd.DataFrame(columns=matrix_cols)
+                    # )
                 else:
-                    with Pool() as po:
+                    with Pool() as po:  # we can't do anything for speed in here... we just need a better processor...
                         mapped = po.map(partial(
                             self.sibling_nodes,
                             optimization_func=self.optimization_func,
                             matrix_cols=matrix_cols,
-                            date=counter
+                            date=counter,
+                            period_cfs=period_cfs,
+                            period_div=period_div
                         ), parents)
-                    matrix = pd.DataFrame(mapped)
-            matrix.apply(lambda x: self.find_coordinates(x), axis=1)
+                    del parents  # reset parents to free up RAM
+                    matrix = pd.DataFrame(mapped, columns=matrix_cols)
+                    del mapped  # free up ram...
             init_matrix = matrix  # hide it if return to old way...
-            # print(matrix)
             print(f'example at time: {counter}')
             print(matrix.loc[0].head(1).values[0].assets_data)
-            # replace_matrix with json data here and then create parquet file!
-            matrix = matrix.apply(lambda x: self.dictionarize(x), axis=1)
-            # print('new matrix: ')
-            # print(matrix)
+            print('dimensioni: ', init_matrix.size)
+            # matrix = matrix.apply(lambda x: self.dictionarize(x), axis=1)
+            if counter < 7:
+                matrix = matrix.apply(lambda x: self.dictionarize(x), axis=1)
+            else:
+                matrix = pd.DataFrame(thread_process(self.dictionarize_thread, matrix))
             matrix.to_parquet(f'period_{counter}')
-            # table = pa.Table.from_pandas(matrix)
-            # pq.write_table(table, f'period_{counter}.parquet')
+            del matrix
+            gc.collect()
             counter += 1
 
     def test_node(self):
@@ -322,9 +330,11 @@ class NewTree:
         )
         print('assets data of root node:')
         print(root_node.assets_data)
-        init_matrix = pd.DataFrame({root_node})
+        init_matrix = pd.DataFrame({root_node}, columns=['0'])
         # save initial matrix somewhere like a parquet file, just make sure that it saves entire instances in the cells
         self.generate_tree(init_matrix)
+        print('tree generated!')
+        init_matrix.apply(lambda x: self.dictionarize(x), axis=1).to_parquet(f'period_{0}')
 
     @staticmethod
     def convert_to_node(x):
