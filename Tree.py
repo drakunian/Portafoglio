@@ -157,68 +157,48 @@ class NewTree:
         for i, row in node.conditional_covariances.iterrows():
             l0 = node.conditional_covariances.loc[i, 'level_0']
             l1 = node.conditional_covariances.loc[i, 'level_1']
-            deviations.loc[i, 'first_term'] = node.assets_data.loc[l0, 'residuals'] * node.assets_data.loc[l1, 'residuals']
+            deviations.loc[i, 'first_term'] = node.assets_data.loc[l0, 'residuals'] * node.assets_data.loc[
+                l1, 'residuals']
         return deviations
 
-    @staticmethod
-    def compute_total_deviations(devs):
-        return sum(devs[devs >= 0]), sum(devs[devs < 0])
-
-    def gross_compute_deviations(self, list_of_probabilities, parent, sibling_nodes=[]):
-        """
-        usa questa funzione per generare le deviazioni, che fanno parte della funzione obiettivo. La quale a sua volta
-        sarà passata a optimization_func dove verrà eseguito il codice cplex.
-        SU QUESTA FUNZIONE CI LAVORERO' IO, ASSICURANDOMI DI FARTI AVERE EFFICIENTEMENTE I DATI DELLE DEVIAZIONI PER IL
-        CALCOLO DELLA FUNZIONE OBIETTIVO
-        """
-        # VELOCIZZARE E SNELLIRE QUESTO PRIMO PROCESSO DI ITERAZIONE!
-        first_term_1 = []
-        first_term_2 = []
-        first_term_3 = []
-        first_term_4 = []
-        cov_dev_matrix = []
-        # write this for loop in a better way! (try using map)
-        i = 0
-        for x in list_of_probabilities:
-            used_node = sibling_nodes[i]
-            # terms_matrix[i][0] = used_node.assets_data['returns_t'] * x
-            # terms_matrix[i][0] = (used_node.assets_data['residuals'] ** 2) * x
-            # terms_matrix[i][0] = (used_node.assets_data['residuals'] ** 3) * x
-            # terms_matrix[i][0] = (used_node.assets_data['residuals'] ** 4) * x
-            #                                    initial[i] * final[i] for
-            first_term_1.append((self.assets['a_i'] - used_node.assets_data['returns_t']) * x)
-            first_term_2.append((parent.assets_data['sigma_t'] ** 2 - (used_node.assets_data['residuals'] ** 2)) * x)
-            first_term_3.append((self.assets['third_moment'] - (used_node.assets_data['residuals'] ** 3)) * x)
-            first_term_4.append((self.assets['fourth_moment'] - (used_node.assets_data['residuals'] ** 4)) * x)
-            # add deviations for the covariances!
-            cov_dev_matrix.append((parent.conditional_covariances[0] - self.map_covariance_deviations(used_node).T) * x)
-            i += 1
-
-        gross_deviations = [
-            pd.concat(first_term_1, axis=1).to_numpy(), pd.concat(first_term_2, axis=1).to_numpy(),
-            pd.concat(first_term_3, axis=1).to_numpy(), pd.concat(first_term_4, axis=1).to_numpy()
-        ]
-        # vectorized this function below:
-        deviations = pd.DataFrame(
-            [self.compute_total_deviations(dev) for dev in gross_deviations],
-            columns=['positive', 'negative']
-        )
-        cov_dev_df = pd.DataFrame(
-            [self.compute_total_deviations(dev) for dev in pd.concat(cov_dev_matrix, axis=1).to_numpy()],
-            columns=['positive', 'negative']
-        )
-        return abs(deviations), abs(cov_dev_df)
-
-    def target_function(self, list_of_probabilities, parent, sibling_nodes=None):
+    def target_function(self, m, list_of_probabilities, parent, sibling_nodes=None):
         """
         la funzione precedente calcola le deviazioi, qui, hai la funzione obiettivo, che sommatutte le deviazioni pesate
         di ciascun asset.
         IT MUST READ CONSTRAINT IN A WAY THAT IS READABLE BY CPLEX...
         """
-        deviations_dataframe, cov_deviations_dataframe = self.gross_compute_deviations(
-            list_of_probabilities, parent=parent, sibling_nodes=sibling_nodes
-        )
-        return deviations_dataframe.sum().sum() + cov_deviations_dataframe.sum().sum()
+        r, c = len(list_of_probabilities), len(self.assets)
+        deviations = np.array([
+            np.zeros(shape=(r, c), dtype=object), np.zeros(shape=(r, c), dtype=object),
+            np.zeros(shape=(r, c), dtype=object), np.zeros(shape=(r, c), dtype=object)
+        ])
+        cov_dev_matrix = np.zeros(shape=(r, c), dtype=object)
+        i = 0
+        for x in list_of_probabilities:
+            used_node = sibling_nodes[i]
+            deviations[0][i] = np.array(
+                [m.abs(el * x) for el in self.assets['a_i'] - used_node.assets_data['returns_t']]
+            )
+            deviations[1][i] = np.array(
+                [m.abs(el * x) for el in parent.assets_data['sigma_t'] ** 2 - used_node.assets_data['residuals'] ** 2]
+            )
+            deviations[2][i] = np.array(
+                [m.abs(el * x) for el in self.assets['third_moment'] - used_node.assets_data['residuals'] ** 3]
+            )
+            deviations[3][i] = np.array(
+                [m.abs(el * x) for el in self.assets['fourth_moment'] - used_node.assets_data['residuals'] ** 4]
+            )
+            cov_dev_matrix[i] = np.array(
+                [m.abs(el * x) for el in
+                 parent.conditional_covariances[0] - self.map_covariance_deviations(used_node).T]
+            )
+            i += 1
+
+        deviations = deviations.flatten()
+        cov_dev_matrix = cov_dev_matrix.flatten()
+        deviations = m.sum(deviations[i] for i in range(len(deviations)))
+        cov_dev_df = m.sum(cov_dev_matrix[i] for i in range(len(cov_dev_matrix)))
+        return deviations, cov_dev_df
 
     def optimization_func(self, parent, sibling_nodes):
         """
@@ -235,37 +215,31 @@ class NewTree:
             Il tutto per ora è stato strutturato come se cplex prenda una funzione come parametro, ma va verificato ed
             in caso andranno fuse le varie parti del poblema di ottimizzazione dentro questa funzione
         """
-        model = Model(name='esempio_modello')
-
         n = len(sibling_nodes)
-        list_of_probabilities = [1 / n for _ in sibling_nodes]  # 'dummy startup list'
-
-        N = len(list_of_probabilities)
         sensibility = 0.5
-        LB = sensibility * 1 / N
-
-
+        LB = sensibility * 1 / n
         # Creazione delle variabili
-        variables = [model.continuous_var(lb=LB, name=f'x{i}') for i in range(N)]
-
-        # Vincolo
-        model.add_constraint(model.sum(variables[i] for i in range(N)) == 1, ctname='sum_probability')
-
-        model.set_objective("min", self.target_function(list_of_probabilities, parent=parent, sibling_nodes=sibling_nodes))
-        #model.minimize(self.target_function(list_of_probabilities, parent=parent, sibling_nodes=sibling_nodes))
-
-        # Risoluzione del modello
-        solution = model.solve()
-
+        with Model(name='esempio_modello') as model:
+            variables = [model.continuous_var(lb=LB, name=f'x{i}') for i in range(n)]
+            print(variables)
+            # Vincolo
+            model.add_constraint(model.sum(variables[i] for i in range(n)) == 1, ctname='sum_probability')
+            # dev, codev = self.target_function(model, variables, parent=parent, sibling_nodes=sibling_nodes)
+            obj = model.sum(
+                el for el in self.target_function(model, variables, parent=parent, sibling_nodes=sibling_nodes))
+            print(obj)
+            model.set_objective("minimize", obj)
+            # Risoluzione del modello
+            solution = model.solve()
+            print(solution)
+        print('Valore ottimo:', solution.get_objective_value())
         # Stampa della soluzione
         '''print('Valore ottimo:', solution.get_objective_value())
         for i, var in enumerate(variables):
             print(f'x{i} = {solution.get_value(var)}')'''
-
-        solution_list = [solution.get_value(var) for var in variables]
-
+        list_of_probabilities = [solution.get_value(var) for var in variables]
         # Restituzione della lista delle soluzioni
-        return solution_list
+        return list_of_probabilities  # solution_list
 
     def sibling_nodes(self, parent, optimization_func=None, matrix_cols=None, date=None):
         """
