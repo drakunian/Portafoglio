@@ -161,7 +161,7 @@ class NewTree:
                 l1, 'residuals']
         return deviations
 
-    def target_function(self, m, list_of_probabilities, parent, sibling_nodes=None):
+    def target_function_old(self, m, list_of_probabilities, parent, sibling_nodes=None):
         """
         la funzione precedente calcola le deviazioi, qui, hai la funzione obiettivo, che sommatutte le deviazioni pesate
         di ciascun asset.
@@ -200,6 +200,42 @@ class NewTree:
         cov_dev_df = m.sum(cov_dev_matrix[i] for i in range(len(cov_dev_matrix)))
         return deviations, cov_dev_df
 
+    def target_function(self, m, list_of_probabilities, parent, sibling_nodes=None):
+        """
+        la funzione precedente calcola le deviazioi, qui, hai la funzione obiettivo, che sommatutte le deviazioni pesate
+        di ciascun asset.
+        IT MUST READ CONSTRAINT IN A WAY THAT IS READABLE BY CPLEX...
+        """
+        x = list_of_probabilities
+        r, c = len(x), len(self.assets)
+
+        all_returns = pd.concat([i.assets_data['returns_t'] for i in sibling_nodes], axis=1).T.to_numpy()
+        dev1 = np.array(
+            [np.array([m.abs(self.assets['a_i'].to_numpy()[l] - all_returns[i][l] * x[i]) for l in range(c)]) for i in
+             range(r)]).flatten()
+
+        all_sigmas = pd.concat([i.assets_data['residuals'] ** 2 for i in sibling_nodes], axis=1).T.to_numpy()
+        dev2 = np.array([np.array(
+            [m.abs((parent.assets_data['sigma_t'] ** 2).to_numpy()[l] - all_sigmas[i][l] * x[i]) for l in range(c)]) for
+                         i in range(r)]).flatten()
+
+        all_third = pd.concat([i.assets_data['residuals'] ** 3 for i in sibling_nodes], axis=1).T.to_numpy()
+        dev3 = np.array(
+            [np.array([m.abs(self.assets['third_moment'].to_numpy()[l] - all_third[i][l] * x[i]) for l in range(c)]) for
+             i in range(r)]).flatten()
+
+        all_fourth = pd.concat([i.assets_data['residuals'] ** 4 for i in sibling_nodes], axis=1).T.to_numpy()
+        dev4 = np.array(
+            [np.array([m.abs(self.assets['fourth_moment'].to_numpy()[l] - all_fourth[i][l] * x[i]) for l in range(c)])
+             for i in range(r)]).flatten()
+
+        all_cov = pd.concat([self.map_covariance_deviations(i).T for i in sibling_nodes]).to_numpy()
+        cov_dev = np.array(
+            [np.array([m.abs(parent.conditional_covariances[0].to_numpy()[l] - all_cov[i][l] * x[i]) for l in range(c)])
+             for i in range(r)]).flatten()
+
+        return m.sum(el for el in dev1), m.sum(el for el in dev2), m.sum(el for el in dev3), m.sum(el for el in dev4), m.sum(el for el in cov_dev)
+
     def optimization_func(self, parent, sibling_nodes):
         """
         Alla fine, i constraint per il problema cplex sono i seguenti:
@@ -220,15 +256,15 @@ class NewTree:
         LB = sensibility * 1 / n
         # Creazione delle variabili
         with Model(name='esempio_modello') as model:
-            variables = [model.continuous_var(lb=LB, name=f'x{i}') for i in range(n)]
+            variables = [model.continuous_var(lb=LB, ub=1, name=f'x{i}') for i in range(n)]
             print(variables)
             # Vincolo
             model.add_constraint(model.sum(variables[i] for i in range(n)) == 1, ctname='sum_probability')
-            # dev, codev = self.target_function(model, variables, parent=parent, sibling_nodes=sibling_nodes)
-            obj = model.sum(
-                el for el in self.target_function(model, variables, parent=parent, sibling_nodes=sibling_nodes))
-            print(obj)
-            model.set_objective("minimize", obj)
+            model.set_objective(
+                "minimize",
+                model.sum(
+                    obj for obj in self.target_function(model, variables, parent=parent, sibling_nodes=sibling_nodes))
+            )
             # Risoluzione del modello
             solution = model.solve()
             print(solution)
@@ -238,6 +274,7 @@ class NewTree:
         for i, var in enumerate(variables):
             print(f'x{i} = {solution.get_value(var)}')'''
         list_of_probabilities = [solution.get_value(var) for var in variables]
+        print(list_of_probabilities)
         # Restituzione della lista delle soluzioni
         return list_of_probabilities  # solution_list
 
