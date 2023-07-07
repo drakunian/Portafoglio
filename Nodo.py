@@ -64,7 +64,7 @@ class ScenarioNode:
             self.probability = 1  # of single Node, not conditional to the previous node probability
             self.cond_probability = 1
 
-        self.cashflows_data = cfs  # inflows ad outflows net of cash in period...
+        self.cashflows_data = 0 if cfs is None else cfs  # inflows ad outflows net of cash in period...
         # self.dividends = None
         self.rebalancing_vector = []  # vector of shares/value to buy (+) or sell (-) of each asset
 
@@ -144,6 +144,8 @@ class ScenarioNode:
         cov_matrix = np.dot(self.conditional_volatilities, np.dot(cor_matrix, self.conditional_volatilities))
         cov_matrix = pd.DataFrame(cov_matrix, index=self.assets_data.index, columns=self.assets_data.index)
         dpc = deepcopy(cov_matrix)
+        dpc['cash'] = .0
+        dpc.loc['cash'] = .0
         cov_matrix = cov_matrix.where(np.triu(np.ones(cov_matrix.shape)).astype(np.bool_)).stack().reset_index()
         # return both compressed and matrix mode
         return cov_matrix.loc[cov_matrix['level_0'] != cov_matrix['level_1']], dpc
@@ -165,70 +167,76 @@ class ScenarioNode:
         }]
 
     # define methods for optimization:
-    def compute_final_pf_value(self, parent_pf_data: pd.DataFrame) -> float:
-        active_pf_value = parent_pf_data['n_assets'] * self.assets_data['close_prices_t']
-        # must sum also dividends earned:
-        cash_dividends = sum(
-            self.assets_data['close_prices_t'] * self.assets_data['earned_dividend_yield_t'] * parent_pf_data['n_assets']
-        )
-        cash_value = parent_pf_data.loc['cash', 'n_assets'] + self.cashflows_data + cash_dividends
-        return active_pf_value + cash_value
-
-    def cvar_formula(self, weights: pd.DataFrame, dividend_exp: pd.DataFrame) -> float:
+    def compute_final_pf_value(self, m, parent_pf_data, prices: np.array) -> float:
         """
-        given weights and all the other parameters, it computes the cvar of portfolio. Takes into account effective
-        returns (price_change + dividend/price) for each asset, as well as cash as an asset with return == cash_return,
-        variance == 0, covariances == 0
+        PARENT DATA IS A CPLEX EXPRESSION.
+        here we adjust the input value to get the value at the end of period, before rebalancing
+
+        parent_pf_data = reb_portfolio_shares: [shares1, shares2, ..., sharesN, cash]
+            WHERE: shares = w[i] * pf_value_adj // prices[i]; cash = pf_value - m.sum(prices[i] * shares[i])
+        """
+        dividends = (self.assets_data['earned_dividend_yield_t'] * self.assets_data['close_prices_t']).to_numpy()
+        # 'close_prices_t' * 'earned_dividend_yield_t' * shares
+        #                  excluding cash!
+        lt = range(len(prices))
+        price_returns_component = m.sum(parent_pf_data[i] * prices[i] for i in lt)
+        cash_transactions = self.cashflows_data + m.sum(parent_pf_data[i] * dividends[i] for i in lt)  # + cash s, for now 0...
+        del lt
+        return price_returns_component + cash_transactions
+
+    def adjust_portfolio(self, m, w: list, parent_pf_data):
+        """
+        w (weights) = [model.continuous_var(lb=lb, ub=ub, name=f'w{i}') for i in range(n)]
+            with: model.add_constraint(model.sum(weights[i] for i in range(n)) == 1, name='sum_weights')
+        """
+        prices = self.assets_data['close_prices_t'].to_numpy()
+        pf_value = self.compute_final_pf_value(m, parent_pf_data, prices)
+        rg = range(len(self.assets_data))
+        # buffer can be a func of weights, it adjust so that constraint holds w/ changing weights
+        buffered_pf_value = "func(cvar)"
+        cont_invested_pf = [buffered_pf_value * w[i] for i in rg]  # weight is adjusted for int shares
+        rebalanced_portfolio_shares = [cont_invested_pf[i]//prices[i] for i in rg]
+        cash = pf_value - m.sum(rebalanced_portfolio_shares[i] * prices[i] for i in rg)
+        # before that, set cash_price == 1. As cash is the last element, append 1 to prices
+        prices.append(1)
+        rebalanced_portfolio_shares.append(cash)
+        lt = range(len(rebalanced_portfolio_shares))
+        rebalanced_portfolio_weights = [(rebalanced_portfolio_shares[i] * prices[i]) / pf_value for i in lt]
+        return rebalanced_portfolio_weights, rebalanced_portfolio_shares
+
+    def compute_cvar(self, m, portfolio, dividend_exp: np.array):
+        """
+        portfolio = rebalanced_portfolio_weights = [(rebalanced_portfolio_shares[i] * prices[i]) / pf_value]
+            Holds also values for cash!
         """
         alpha_es = .05
-        'std dev of portfolio given weightings...'
+        'std dev of portfolio given weightings. Add cov of cash, which is 0 and, 0 variance. do it before assignment'
+        # NEEDS TO BE ADJUSTED!!!
         portfolio_risk = np.sqrt(np.dot(
-            weights,  # weight will be updated passing it from main function or from parent...
-            np.dot(self.covariances_matrix, weights.T)
-        ))
+            portfolio,  # weight will be updated passing it from main function or from parent...
+            np.dot(self.covariances_matrix, portfolio.T)
+        ))  # CPLEX that
         # dividend_exp is a parameter passed to all nodes in period, referring to next-period dividends...
-        portfolio_return = sum((self.assets_data['a_i'] + dividend_exp) * self.assets_data['weight'])
-        # you may want to pass dividend of same period and of the next when building portfolio...
-
+        ai_list = self.assets_data['a_i'].to_numpy()
+        ai_list.append(0)  # returns of cash, probably wrong syntax!
+        dividend_exp.append(0)  # yield of cash asset, probably wrong syntax!
+        #                                  not converted to per-share value!
+        portfolio_return = m.sum((ai_list[i] + dividend_exp[i]) * portfolio[i] for i in range(len(portfolio)))
         return (alpha_es ** -1) * norm.pdf(norm.ppf(alpha_es)) * portfolio_risk - portfolio_return
 
-    def adjust_portfolio(self, weights: pd.DataFrame, dividend_exp: pd.DataFrame, parent_pf_data: pd.DataFrame):
+    def compute_opt_parameters(self, m, lCVaR, cVaR, weights, dividend_exp: np.array, parent_pf_data):
         """
         takes CVaR objective and LCVaR and returns a portfolio with a CVaR in-between adjusting invested_cap/cash ratio
         returns number of shares for each asset, effective weights (against theoretical weights) and value results
 
-        OPTIMIZE THIS FUNCTION!!!!
+        rebalancing_vector will be a cplex expression, not a pandas df...
         """
         # 1) compute CVaR
-        cVaR = self.cvar_formula(weights, dividend_exp)
-        lCVaR = 0  # pass it globally fom optimization class...
-        VaR = 0
-        pf_value = self.compute_final_pf_value(parent_pf_data)
-        if cVaR > lCVaR:
-            delta_var = lCVaR - VaR  # you get it globally
-            safety_net = 0.1  # goes from 0 -> 1: if 1, you go directly to VaR level, if 0 you stick to lCVaR, get it globally
-            # cash_weight = 1 - ((lCVaR - delta_var*safety_net) / cVaR)
-            # now compute rebalanced weights:
-            # define the json of assets with rounded shares, effective weights, theoretical weights and cash data
-            self.assets_data['weight'] = weights * (1-((lCVaR - delta_var*safety_net) / cVaR))  # theoretical weights
-            self.assets_data['n_assets'] = self.assets_data['weight'] * pf_value // self.assets_data['close_prices_t']
-            # the one below is not strictly necessary for now...
-            # effective weights...
-            # self.assets_data['weight'] = self.assets_data['close_prices_t'] * self.assets_data['n_assets'] / pf_value
-            cash_amount = pf_value - sum(self.assets_data['n_assets'] * self.assets_data['close_prices_t'])
-        else:
-            """CVaR is respected and no adjustment to weights should be done..."""
-            # create buffer for excess roundings:
-            dsp_pf_value = pf_value * .99
-            self.assets_data['weight'] = weights
-            self.assets_data['n_assets'] = self.assets_data['weight'] * dsp_pf_value // self.assets_data['close_prices_t']
-            cash_amount = pf_value - sum(self.assets_data['n_assets'] * self.assets_data['close_prices_t'])
-        self.rebalancing_vector = deepcopy(self.assets_data[['weight', 'n_assets']])  # will be passed to siblings
-        # self.assets_data['tot_value'] = self.assets_data['n_assets'] * self.assets_data['close_prices_t']
-        # see if it works...
-        self.rebalancing_vector.loc['cash'] = [
-            {'weight': cash_amount/pf_value, 'shares': cash_amount, 'tot_value': cash_amount}
-        ]
+        rebalanced_portfolio_weights, rebalanced_portfolio_shares = self.adjust_portfolio(m, weights, parent_pf_data)
+        rebalanced_pf_cvar = self.compute_cvar(m, rebalanced_portfolio_weights, dividend_exp)
+        m.add_constraint(rebalanced_pf_cvar >= cVaR, ctname='above_cvar')
+        m.add_constraint(rebalanced_pf_cvar < lCVaR, ctname='below_limit_cvar')
+        return rebalanced_portfolio_shares
 
 
 
