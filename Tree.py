@@ -161,45 +161,6 @@ class NewTree:
                 l1, 'residuals']
         return deviations
 
-    def target_function_old(self, m, list_of_probabilities, parent, sibling_nodes=None):
-        """
-        la funzione precedente calcola le deviazioi, qui, hai la funzione obiettivo, che sommatutte le deviazioni pesate
-        di ciascun asset.
-        IT MUST READ CONSTRAINT IN A WAY THAT IS READABLE BY CPLEX...
-        """
-        r, c = len(list_of_probabilities), len(self.assets)
-        deviations = np.array([
-            np.zeros(shape=(r, c), dtype=object), np.zeros(shape=(r, c), dtype=object),
-            np.zeros(shape=(r, c), dtype=object), np.zeros(shape=(r, c), dtype=object)
-        ])
-        cov_dev_matrix = np.zeros(shape=(r, c), dtype=object)
-        i = 0
-        for x in list_of_probabilities:
-            used_node = sibling_nodes[i]
-            deviations[0][i] = np.array(
-                [m.abs(el * x) for el in self.assets['a_i'] - used_node.assets_data['returns_t']]
-            )
-            deviations[1][i] = np.array(
-                [m.abs(el * x) for el in parent.assets_data['sigma_t'] ** 2 - used_node.assets_data['residuals'] ** 2]
-            )
-            deviations[2][i] = np.array(
-                [m.abs(el * x) for el in self.assets['third_moment'] - used_node.assets_data['residuals'] ** 3]
-            )
-            deviations[3][i] = np.array(
-                [m.abs(el * x) for el in self.assets['fourth_moment'] - used_node.assets_data['residuals'] ** 4]
-            )
-            cov_dev_matrix[i] = np.array(
-                [m.abs(el * x) for el in
-                 parent.conditional_covariances[0] - self.map_covariance_deviations(used_node).T]
-            )
-            i += 1
-
-        deviations = deviations.flatten()
-        cov_dev_matrix = cov_dev_matrix.flatten()
-        deviations = m.sum(deviations[i] for i in range(len(deviations)))
-        cov_dev_df = m.sum(cov_dev_matrix[i] for i in range(len(cov_dev_matrix)))
-        return deviations, cov_dev_df
-
     def target_function(self, m, list_of_probabilities, parent, sibling_nodes=None):
         """
         la funzione precedente calcola le deviazioi, qui, hai la funzione obiettivo, che sommatutte le deviazioni pesate
@@ -373,7 +334,7 @@ class NewTree:
             if counter < 7:
                 matrix = matrix.apply(lambda x: self.dictionarize(x), axis=1)
             else:
-                matrix = pd.DataFrame(thread_process(self.dictionarize_thread, matrix),columns=matrix_cols)
+                matrix = pd.DataFrame(thread_process(self.dictionarize_thread, matrix), columns=matrix_cols)
             print(matrix)
             matrix.to_parquet(f'period_{counter}')
             #table = pa.Table.from_pandas(matrix)
@@ -393,7 +354,6 @@ class NewTree:
         self.generate_tree(init_matrix)
         print('tree generated!')
         init_matrix.apply(lambda x: self.dictionarize(x), axis=1).to_parquet(f'period_{0}')
-
 
     @staticmethod
     def convert_to_node(x):
