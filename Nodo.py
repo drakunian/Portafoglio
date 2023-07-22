@@ -1,12 +1,13 @@
 from functools import partial
-# import pyarrow
 from math import e, log
 from multiprocessing import Pool
-
 import numpy as np
 import pandas as pd
 from numpy import ndarray, pi
-
+import json
+from scipy.stats import norm
+from Tripla import Tripla
+from copy import deepcopy
 
 def egarch_formula(e_i, omega, alpha, gamma_, beta, sigma_t_m_1): #da mettere nella classe tool per le due classi
     """For now, when errors occur giving too high volatilities (as high as 45.000!), we just give back the same
@@ -141,6 +142,7 @@ class ScenarioNode:
         """
         SIMPLIFY AND SPEED UP THAT ONE HERE!
         """
+        print('FUNZIONE: compute covariances')
         cov_matrix = np.dot(self.conditional_volatilities, np.dot(cor_matrix, self.conditional_volatilities))
         cov_matrix = pd.DataFrame(cov_matrix, index=self.assets_data.index, columns=self.assets_data.index)
         dpc = deepcopy(cov_matrix)
@@ -182,8 +184,7 @@ class ScenarioNode:
         #                  excluding cash!
         lt = range(len(prices))
         price_returns_component = m.sum(parent_pf_data[i] * prices[i] for i in lt)
-        cash_transactions = self.cashflows_data + m.sum(
-            parent_pf_data[i] * dividends[i] for i in lt)  # + cash s, for now 0...
+        cash_transactions = self.cashflows_data + m.sum(parent_pf_data[i] * dividends[i] for i in lt)  # + cash s, for now 0...
         del lt
         return price_returns_component + cash_transactions
 
@@ -192,6 +193,8 @@ class ScenarioNode:
         w (weights) = [model.continuous_var(lb=lb, ub=ub, name=f'w{i}') for i in range(n)]
             with: model.add_constraint(model.sum(weights[i] for i in range(n)) == 1, name='sum_weights')
         """
+        self.covariances_matrix['cash'] = 0.0
+        self.covariances_matrix.loc['cash'] = 0.0
         init_variables = [
             m.continuous_var(lb=0, ub=1, name=f'w_0_{self.date}'),
             m.continuous_var(lb=0, ub=1, name=f'w_cash_{self.date}')
@@ -207,21 +210,20 @@ class ScenarioNode:
                 m.add_constraint(w_i == ratios[i - 1] * init_variables[0])
                 w.append(w_i)
         m.add_constraint(m.sum(el for el in w) == 1)
-        print(w)
+
         prices = self.assets_data['close_prices_t'].to_numpy()
-        pf_value = self.compute_final_pf_value(m, parent_pf_data, prices) if type(
-            parent_pf_data) == list else parent_pf_data
+        pf_value = self.compute_final_pf_value(m, parent_pf_data, prices) if type(parent_pf_data) == list else parent_pf_data
         prices = np.append(prices, np.array([1]))
-        rg = range(len(self.assets_data))
+        rg = range(len(self.assets_data)+1)
         # buffer can be a func of weights, it adjust so that constraint holds w/ changing weights
         invested_portfolio = [pf_value * w[i] for i in rg]  # weight is adjusted for int shares
-        rebalanced_portfolio_shares = [invested_portfolio[i] / prices[i] for i in rg]
+        rebalanced_portfolio_shares = [invested_portfolio[i]/prices[i] for i in rg]
 
-        lt = range(len(rebalanced_portfolio_shares))
         rebalanced_portfolio_weights = w
 
         assets = self.covariances_matrix.columns
-        rebalanced_portfolio_shares = [{assets[i]: rebalanced_portfolio_shares[i] for i in range(len(assets))}]
+        rebalanced_portfolio_shares = {assets[i]: rebalanced_portfolio_shares[i] for i in range(len(assets))}
+
         return rebalanced_portfolio_weights, rebalanced_portfolio_shares
 
     def compute_cvar(self, m, portfolio, dividend_exp: np.array):
@@ -229,8 +231,9 @@ class ScenarioNode:
         portfolio = rebalanced_portfolio_weights = [(rebalanced_portfolio_shares[i] * prices[i]) / pf_value]
             Holds also values for cash!
         """
+        print('FUNZIONE: compute_cvar')
         alpha_es = .05
-        print(portfolio)
+        print(f'rebalanced_portfolio_weights: {portfolio}')
         'std dev of portfolio given weightings. Add cov of cash, which is 0 and, 0 variance. do it before assignment'
         # NEEDS TO BE ADJUSTED!!!
         self.covariances_matrix['cash'] = 0.0
@@ -249,7 +252,7 @@ class ScenarioNode:
         portfolio_risk = m.continuous_var(lb=0, name='risk')
         m.add_constraint(portfolio_risk ** 2 == portfolio_variance)
         print('pf risk')
-        print(portfolio_risk)
+        print(f'name cplex variable: {portfolio_risk}')
         # dividend_exp is a parameter passed to all nodes in period, referring to next-period dividends...
         ai_list = self.assets_data['a_i'].to_numpy()
         ai_list = np.append(ai_list, np.array([0]))  # returns of cash, probably wrong syntax!
@@ -266,13 +269,10 @@ class ScenarioNode:
         rebalancing_vector will be a cplex expression, not a pandas df...
         """
         # 1) compute CVaR
+        print("FUNZIONE: compute_opt_parameters")
         rebalanced_portfolio_weights, rebalanced_portfolio_shares = self.adjust_portfolio(m, ratios, parent_pf_data)
         rebalanced_pf_cvar = self.compute_cvar(m, rebalanced_portfolio_weights, dividend_exp)
         m.add_constraint(rebalanced_pf_cvar >= cVaR, ctname='above_cvar')
         m.add_constraint(rebalanced_pf_cvar <= lCVaR, ctname='below_limit_cvar')
-        print(rebalanced_portfolio_shares)
+        print(f'rebalanced_portfolio_shares: {rebalanced_portfolio_shares}')
         return rebalanced_portfolio_shares
-
-
-
-
