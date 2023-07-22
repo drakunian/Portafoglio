@@ -377,6 +377,53 @@ def main(exeall = True):  # variabili prese da input
     # print(type(assets_list))
     # print(assets_list)
 
+    # 03_chiedo quali stock_id vuole usare
+    '''print("Inserisci solo gli indici degli asset che vuoi usare, separati da uno INVIO. Quando hai finito digita STOP.")
+    i = 0
+    assets_list = []
+    while True:
+        assets_input = str(input("" + str(i + 1) + " --> "))
+        if (assets_input.upper() == "STOP" or assets_input.isalpha()):
+            break
+        assets_list.append(int(assets_input))
+        i += 1
+        # chiedo input di cash e lo aggiungo alla assets_list
+    while True:
+        cash = int(input("Dimmi quanti soldi hai: \t"))
+        if cash > 0:
+            break
+    print(assets_list)
+    print(len(assets_list))'''
+
+    # ------------------------------------------------------------------------------------------------------------------------
+    # collegamento con la query multi_value_fetch
+    '''dc = DBConnection()
+    do = DBOperations(dc.conn)
+    sd = [['stock_id', 'symbol'], 'stock_data']
+    ed = [['etf_id', 'symbol'], 'etf_data']
+    stock_df, etf_df = do.multi_value_fetch(sd, ed)  # restituisce una lista, ma tutto il contenuto della query va a finire nella prima cella
+    # stock_df = pd.DataFrame(stock_df[0], columns=['stock_id', 'symbol'])
+    etf_df = etf_df.rename(
+        columns={'etf_id': 'stock_id'})  # rinominiamo la colonna perchè altrimenti la concatenazione viene sballata
+    assets_df = pd.concat([stock_df, etf_df]).reset_index(drop=True)
+    #print(assets_df)
+    # 03_chiedo quali stock_id vuole usare
+    #print("Inserisci solo gli stock_id degli asset che vuoi usare, separati da uno INVIO. Quando hai finito digita STOP.")
+    i = 0
+    assets_list = []
+    while True:
+        assets_input = str(input("" + str(i + 1) + " --> "))
+        if (assets_input.upper() == "STOP" or len(assets_input) <= 1):
+            break
+        assets_list.append(assets_input)
+        i += 1
+    df_input = assets_df['stock_id'].isin(assets_list)  # cerco nella colonna stock_id del dataframe i valori nella lista assets_list
+    assets_df = assets_df[df_input]
+    stock_df.reset_index(inplace=True, drop=True)
+    # print(assets_df)
+    assets_list = assets_df['stock_id'].values.tolist()  # trasformo la colonna del dataframe in una lista per il json
+    #print(assets_df)'''
+
 
     '''horizon = 10  # default
     while True:
@@ -467,50 +514,3 @@ if __name__ == "__main__":
     print(f'{minutes} minuti e {round(seconds * 60)} secondi')
 
     # ------------------------------------------------------------------------------------------------------------------------
-
-    # 03_chiedo quali stock_id vuole usare
-    '''print("Inserisci solo gli indici degli asset che vuoi usare, separati da uno INVIO. Quando hai finito digita STOP.")
-    i = 0
-    assets_list = []
-    while True:
-        assets_input = str(input("" + str(i + 1) + " --> "))
-        if (assets_input.upper() == "STOP" or assets_input.isalpha()):
-            break
-        assets_list.append(int(assets_input))
-        i += 1
-        # chiedo input di cash e lo aggiungo alla assets_list
-    while True:
-        cash = int(input("Dimmi quanti soldi hai: \t"))
-        if cash > 0:
-            break
-    print(assets_list)
-    print(len(assets_list))'''
-
-    # ------------------------------------------------------------------------------------------------------------------------
-    # collegamento con la query multi_value_fetch
-    '''dc = DBConnection()
-    do = DBOperations(dc.conn)
-    sd = [['stock_id', 'symbol'], 'stock_data']
-    ed = [['etf_id', 'symbol'], 'etf_data']
-    stock_df, etf_df = do.multi_value_fetch(sd, ed)  # restituisce una lista, ma tutto il contenuto della query va a finire nella prima cella
-    # stock_df = pd.DataFrame(stock_df[0], columns=['stock_id', 'symbol'])
-    etf_df = etf_df.rename(
-        columns={'etf_id': 'stock_id'})  # rinominiamo la colonna perchè altrimenti la concatenazione viene sballata
-    assets_df = pd.concat([stock_df, etf_df]).reset_index(drop=True)
-    #print(assets_df)
-    # 03_chiedo quali stock_id vuole usare
-    #print("Inserisci solo gli stock_id degli asset che vuoi usare, separati da uno INVIO. Quando hai finito digita STOP.")
-    i = 0
-    assets_list = []
-    while True:
-        assets_input = str(input("" + str(i + 1) + " --> "))
-        if (assets_input.upper() == "STOP" or len(assets_input) <= 1):
-            break
-        assets_list.append(assets_input)
-        i += 1
-    df_input = assets_df['stock_id'].isin(assets_list)  # cerco nella colonna stock_id del dataframe i valori nella lista assets_list
-    assets_df = assets_df[df_input]
-    stock_df.reset_index(inplace=True, drop=True)
-    # print(assets_df)
-    assets_list = assets_df['stock_id'].values.tolist()  # trasformo la colonna del dataframe in una lista per il json
-    #print(assets_df)'''
