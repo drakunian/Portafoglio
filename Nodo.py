@@ -226,14 +226,14 @@ class ScenarioNode:
 
         return rebalanced_portfolio_weights, rebalanced_portfolio_shares
 
-    def compute_cvar(self, m, portfolio, dividend_exp: np.array):
+    def compute_cvar(self, m, portfolio, dividend_exp: np.array, alpha):
         """
         portfolio = rebalanced_portfolio_weights = [(rebalanced_portfolio_shares[i] * prices[i]) / pf_value]
             Holds also values for cash!
         """
         print('FUNZIONE: compute_cvar')
-        alpha_es = .05
-        print(f'rebalanced_portfolio_weights: {portfolio}')
+        alpha_es = alpha
+        #print(f'rebalanced_portfolio_weights: {portfolio}')
         'std dev of portfolio given weightings. Add cov of cash, which is 0 and, 0 variance. do it before assignment'
         # NEEDS TO BE ADJUSTED!!!
         self.covariances_matrix['cash'] = 0.0
@@ -251,8 +251,8 @@ class ScenarioNode:
 
         portfolio_risk = m.continuous_var(lb=0, name='risk')
         m.add_constraint(portfolio_risk ** 2 == portfolio_variance)
-        print('pf risk')
-        print(f'name cplex variable: {portfolio_risk}')
+        #print('pf risk')
+        #print(f'name cplex variable: {portfolio_risk}')
         # dividend_exp is a parameter passed to all nodes in period, referring to next-period dividends...
         ai_list = self.assets_data['a_i'].to_numpy()
         ai_list = np.append(ai_list, np.array([0]))  # returns of cash, probably wrong syntax!
@@ -261,7 +261,7 @@ class ScenarioNode:
         portfolio_return = m.sum((ai_list[i] + dividend_exp[i]) * portfolio[i] for i in range(len(portfolio)))
         return (alpha_es ** -1) * norm.pdf(norm.ppf(alpha_es)) * portfolio_risk - portfolio_return
 
-    def compute_opt_parameters(self, m, lCVaR, cVaR, ratios, dividend_exp: np.array, parent_pf_data):
+    def compute_opt_parameters(self, m, lCVaR, cVaR, ratios, dividend_exp: np.array, parent_pf_data, alpha):
         """
         takes CVaR objective and LCVaR and returns a portfolio with a CVaR in-between adjusting invested_cap/cash ratio
         returns number of shares for each asset, effective weights (against theoretical weights) and value results
@@ -271,7 +271,7 @@ class ScenarioNode:
         # 1) compute CVaR
         print("FUNZIONE: compute_opt_parameters")
         rebalanced_portfolio_weights, rebalanced_portfolio_shares = self.adjust_portfolio(m, ratios, parent_pf_data)
-        rebalanced_pf_cvar = self.compute_cvar(m, rebalanced_portfolio_weights, dividend_exp)
+        rebalanced_pf_cvar = self.compute_cvar(m, rebalanced_portfolio_weights, dividend_exp, alpha)
         m.add_constraint(rebalanced_pf_cvar >= cVaR, ctname='above_cvar')
         m.add_constraint(rebalanced_pf_cvar <= lCVaR, ctname='below_limit_cvar')
         print(f'rebalanced_portfolio_shares: {rebalanced_portfolio_shares}')

@@ -13,6 +13,9 @@
 /cash_return
 0
 
+/currency
+EUR
+
 /alpha
 0.05
 
@@ -33,3 +36,6 @@ IS0Z_XETR_EUR,IS3N_XETR_EUR,IWLE_XETR_EUR
 
 /cash -- quanto l'utente possiede
 10000
+
+/period
+1month

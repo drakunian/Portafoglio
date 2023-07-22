@@ -18,6 +18,9 @@ import pyarrow.parquet as pq
 from docplex.mp.model import Model
 from copy import deepcopy
 import warnings
+
+import Iteration_tree
+
 warnings.filterwarnings('ignore')
 
 from Nodo import ScenarioNode, egarch_formula
@@ -234,6 +237,7 @@ class NewTree:
         for node in sibling_nodes:
             node.probability = prob_list[i]  # make method to update probability...
             # sibling_nodes[i] = node.to_dict()
+            node.compute_conditional_probability(parent.cond_probability)
             i += 1
         return sibling_nodes
 
@@ -351,10 +355,32 @@ class NewTree:
         pass
 
 
-def main():  # variabili prese da input
-    horizon = 10  # default
+def main(exeall = True):  # variabili prese da input
+    # prendo i dati dal file data.txt
+    data_list = []
+    data = open("data.txt", "r")
+    for row in data:
+        row = data.readline()
+        if "/" not in row:
+            row = re.sub('[\n]', '', row)  # per eliminare i \n alla fine di ogni riga
+            data_list.append(row)
+            data.readline()  # serve per evitare le righe vuote (non è bellissimo, ma funziona)
+
+    #print(data_list)
+
+    horizon, lb, ub, risk, cash_return, cash_currency, alpha, VaR_list, LCVar, annuaties, cf_list, assets_list, cash, period = data_list[0], \
+        data_list[1], data_list[2], data_list[3], data_list[4], data_list[5], data_list[6], data_list[7], data_list[8], \
+        data_list[9], data_list[10], data_list[11], data_list[12], data_list[13]
+    # print(horizon, lb, ub, risk, cash_return, alpha, VaR_list, LCVar, annuaties, cf_list, assets_list, cash)
+    assets_list, VaR_list, LCVar = tuple(assets_list.split(',')), VaR_list.split(','), LCVar.split(',')
+    # per trasformare le stringhe in liste
+    # print(type(assets_list))
+    # print(assets_list)
+
+
+    '''horizon = 10  # default
     while True:
-        time_division = int(input("Inserisci la divisione del tempo, (1) settimanale (2) mensile (3) annuale: \t"))
+        period = int(input("Inserisci il period, (1) settimanale (2) mensile (3) annuale: \t"))
         horizon = int(input("Inserisci l'orizzonte: \t"))
         if ((time_division == 1 and horizon < 104) or (time_division == 2 and horizon < 24) or (
                 time_division == 3 and horizon < 2)):
@@ -367,13 +393,14 @@ def main():  # variabili prese da input
             break
     risk = input("Inserisci quanto sei disposto a rischiare in valore decimale")
     cash_return = float(input("Inserisci il cash return"))
+    cash_currency = input("inserisci la currency")
     alpha = 0.05  # livello di confidenza per la misurazione del VaR
     VaR_list = [0.07, 0.05, 0.1]
     LCVar = [0.077, 0.055, 0.11]  # è un multiplo  di VaR_lis (obiettivi)
     annuaties = None  # dataframe, tante righe quante sono i periodi, da prendere in input, di default rimane None
-    cf_list = None  # da prendere in input una lista lunga quanto i periodi, altrimenti rimane None'''
+    cf_list = None  # da prendere in input una lista lunga quanto i periodi, altrimenti rimane None
     assets_list = ['IS0Z_XETR_EUR','IS3N_XETR_EUR','IWLE_XETR_EUR']
-    cash = input('Inserisci il cash')
+    cash = input('Inserisci il cash')'''
 
     with Model(name='esempio_modello') as model:
         VaR = [model.continuous_var(lb=0, name=f'VaR_{i}') for i in range(len(VaR_list))]
@@ -401,6 +428,15 @@ def main():  # variabili prese da input
             # results = ['AAPL_NASDAQ_USD', 'AMZN_NASDAQ_USD', 'EUE_MTA_EUR', 'JPM_NYSE_USD', 'PRY_MTA_EUR', 'SXRV_XETR_EUR', 'UNIR_MTA_EUR']
             Load_file_json(assets_list, cash)
 
+    if exeall:
+        #generazione albero
+        tree = NewTree(
+            assets_df, ast_ret, horizon=horizon, cash_return=cash_return, period=period, cash_currency=cash_currency
+        )
+        tree.test_node()
+
+    Iteration_tree.read_tree(lb, ub, alpha, VaR_list, LCVar, cash)
+
 
 # ------------------------------------------------------------------------------------------------------------------------
 
@@ -419,10 +455,10 @@ if __name__ == "__main__":
     #print(ast_ret)
     # ast_ret.set_index(['datetime'])
 
-    tree = NewTree(
-        assets_df, ast_ret, horizon=5
-    )
-    tree.test_node()
+    #tree = NewTree(
+    #    assets_df, ast_ret, horizon=5
+    #)
+    #tree.test_node()
 
     stop = timeit.default_timer()
     minutes = (stop - start) / 60

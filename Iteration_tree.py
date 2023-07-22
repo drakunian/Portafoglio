@@ -11,37 +11,8 @@ from docplex.mp.model import Model
 from scipy.stats import norm
 import re
 
-
-def iteration_tree(tree):
-    counter = 0
-    horizon = 9
-    i = 0
-    parents = tree[0].to_numpy().flatten()
-    while counter <= horizon:
-        matrix = tree[counter]
-
-        if counter == 0:
-            print(type(matrix.values[0]))
-            print(matrix.info())
-            optimisation(None, matrix.values[0])
-            parents = matrix.to_numpy().flatten()
-        else:
-            matrix.set_index(pd.Index(parents), inplace=True)
-
-            pool = concurrent.futures.ThreadPoolExecutor(max_workers=2)
-            for index, row in matrix.iterrows():
-                pool.submit(optimisation(index, row))
-
-            pool.shutdown(wait=True)
-
-            print(matrix)
-
-            parents = matrix.to_numpy().flatten()
-
-        counter += 1
-
-
-def convert_to_node(x, model, lCVaR, cVaR, weights, dividend_exp: np.array, value, counter):
+def convert_to_node(x, model, lCVaR, cVaR, weights, dividend_exp: np.array, value, counter, alpha):
+    print(counter)
     if x.name == 0:
         variable = value
     else:
@@ -51,40 +22,44 @@ def convert_to_node(x, model, lCVaR, cVaR, weights, dividend_exp: np.array, valu
 
 
     for i in range(len(x)):
-        print('name')
+        #print('name')
         name_str = str(i)
 
-        '''if i == 0:
-            name_str = str(value)'''
-        x[i] = [ScenarioNode(init_data=x[i]).compute_opt_parameters(model, lCVaR, cVaR, weights, dividend_exp, variable)]
-        print(f'x[i]: {x[i]}')
+        horizon = 3
+        cond_probability = x[i][0]['cond_probability']
+        x[i] = [ScenarioNode(init_data=x[i]).compute_opt_parameters(model, lCVaR, cVaR, weights, dividend_exp, variable, alpha)]
+
 
 
         valore_numerico = []
         cplex_variable = []
         for item in x[i]:
-
-            print(type(item))
             for key, value in item.items():
-                # print(f'{value}')
-                # valore_numerico.append(re.search(r'\d+\.\d+', value.to_string()).group())
                 cplex_variable.append(value)
-        # x[i] = Tripla(valore_numerico[0], valore_numerico[1], valore_numerico[2])
-        x[i] = Tripla(cplex_variable[0], cplex_variable[1], cplex_variable[2], cplex_variable[3])
-
-        print(f'x {x}')
+                print(value)
 
 
-def read_tree():
+        if counter != horizon:
+            x[i] = Tripla(cplex_variable[0], cplex_variable[1], cplex_variable[2], cplex_variable[3])
+        else:
+            print(x[i])
+            #print(Tripla(cplex_variable[0], cplex_variable[1], cplex_variable[2], cplex_variable[3]))
+            #x[i] = model.sum([Tripla(cplex_variable[0], cplex_variable[1], cplex_variable[2], cplex_variable[3]), cond_probability])
+            x[i] = model.sum(el for el in cplex_variable) * cond_probability
+
+        #print(f'x {x}')
+
+
+def read_tree(lb, ub, alpha, VaR_list, LCVar, cash):
     """
     qui si riconvertono le celle da liste a ScenarioNode. Poi, si svilupperà la logica di iterazione lungo l'albero
     """
     horizon = 9
     with Model('example') as model:
-        weights = [model.continuous_var(lb=0, ub=1, name=f'w_{i}') for i in range(3)]
-        lCVaR = 0.11
-        cVaR = 0.10
-        value = 10000
+        weights = [model.continuous_var(lb=lb, ub=ub, name=f'w_{i}') for i in range(3)]
+        lCVaR = LCVar
+        cVaR = VaR_list
+        value = cash
         pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
 
         tree = [pd.read_parquet(f'period_{x}') for x in range(2 + 1)]  # read parquet of all periods
@@ -99,21 +74,35 @@ def read_tree():
             counter += 1
 
             pool.submit(
-                matrix.apply(lambda x: convert_to_node(x, model, lCVaR, cVaR, weights, dividend_exp[counter], value, counter),
-                             axis=1))
+                matrix.apply(lambda x: convert_to_node(x, model, lCVaR, cVaR, weights, dividend_exp[counter], value, counter, alpha),axis=1))
             parents = matrix.to_numpy().flatten()
-            print(type(matrix))
             print("------------------------------------------------------------------------")
 
         pool.shutdown(wait=True)
-    return tree
+
+        matrix = tree[-1].to_numpy().flatten()
+
+        model.set_objective('max', model.sum(el for el in matrix))
+        solution = model.solve()
+    print(solution.get_objective_value())
+
+    #return tree
+
+def optimisation(tree):
+    print(tree)
+    matrix = tree.to_numpy().flatten()
+
+    model
 
 
-start = timeit.default_timer()
-tree = read_tree()
-# iteration_tree(tree)
 
-stop = timeit.default_timer()
-minutes = (stop - start) / 60
-seconds, minutes = math.modf(minutes)
-print(f'{minutes} minuti e {round(seconds * 60)} secondi')
+#start = timeit.default_timer()
+#read_tree()
+##optimisation(tree[-1])
+## iteration_tree(tree)
+#
+#
+#stop = timeit.default_timer()
+#minutes = (stop - start) / 60
+#seconds, minutes = math.modf(minutes)
+#print(f'{minutes} minuti e {round(seconds * 60)} secondi')
